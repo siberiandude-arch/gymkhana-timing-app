@@ -23,7 +23,7 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             2>&1 | tee build.log
 
-      - name: Fail on compiler warnings
+      - name: Fail on compiler warnings (build)
         if: always()
         run: |
           if grep -E ': warning:' build.log; then
@@ -32,9 +32,35 @@ jobs:
           fi
           echo "No compiler warnings."
 
-      - name: Upload build log
+      - name: Show available simulators
+        if: always()
+        run: xcrun simctl list devicetypes
+
+      - name: Run VideoAnalyzerTests on real test videos (iOS Simulator)
+        run: |
+          set -o pipefail
+          xcodebuild test \
+            -project GymkhanaTiming/GymkhanaTiming.xcodeproj \
+            -scheme GymkhanaTiming \
+            -destination 'platform=iOS Simulator,name=iPhone 16,OS=latest' \
+            -only-testing:GymkhanaTimingTests/VideoAnalyzerTests \
+            CODE_SIGNING_ALLOWED=NO \
+            2>&1 | tee test.log
+
+      - name: Fail on compiler warnings (test)
+        if: always()
+        run: |
+          if grep -E ': warning:' test.log; then
+            echo "Test build produced warnings — treating as failure."
+            exit 1
+          fi
+          echo "No compiler warnings."
+
+      - name: Upload logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: build-log
-          path: build.log
+          name: build-and-test-logs
+          path: |
+            build.log
+            test.log
