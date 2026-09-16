@@ -1,0 +1,40 @@
+name: iOS Build
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show Xcode version
+        run: xcodebuild -version
+
+      - name: Build (iOS Simulator, no code signing)
+        run: |
+          set -o pipefail
+          xcodebuild build \
+            -project GymkhanaTiming/GymkhanaTiming.xcodeproj \
+            -scheme GymkhanaTiming \
+            -destination 'generic/platform=iOS Simulator' \
+            CODE_SIGNING_ALLOWED=NO \
+            2>&1 | tee build.log
+
+      - name: Fail on compiler warnings
+        if: always()
+        run: |
+          if grep -E ': warning:' build.log; then
+            echo "Build produced warnings — treating as failure."
+            exit 1
+          fi
+          echo "No compiler warnings."
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: build.log
