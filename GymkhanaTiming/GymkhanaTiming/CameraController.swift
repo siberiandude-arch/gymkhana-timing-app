@@ -11,8 +11,9 @@ final class CameraController: NSObject, ObservableObject {
     private let sessionQueue = DispatchQueue(label: "camera.session.queue")
 
     @Published var isRecording = false
-    @Published var recordedURL: URL?
     @Published var errorMessage: String?
+
+    var onRecordingFinished: ((URL) -> Void)?
 
     override init() {
         super.init()
@@ -98,14 +99,8 @@ extension CameraController: AVCaptureFileOutputRecordingDelegate {
             if let error {
                 self.errorMessage = error.localizedDescription
             } else {
-                self.recordedURL = outputFileURL
+                self.onRecordingFinished?(outputFileURL)
             }
         }
-    }
-
-    func fileOutput(_ output: AVCaptureFileOutput,
-                     willFinishRecordingTo fileURL: URL,
-                     from connections: [AVCaptureConnection],
-                     error: Error?) {
     }
 }

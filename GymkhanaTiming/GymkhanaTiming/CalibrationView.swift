@@ -120,13 +120,11 @@ struct CalibrationView: View {
         do {
             let duration = try await asset.load(.duration)
             let time = CMTime(seconds: min(0.5, duration.seconds / 2), preferredTimescale: 600)
-            let cgImage = try await Task.detached(priority: .userInitiated) { () throws -> CGImage in
-                let generator = AVAssetImageGenerator(asset: asset)
-                generator.appliesPreferredTrackTransform = true
-                generator.requestedTimeToleranceBefore = .zero
-                generator.requestedTimeToleranceAfter = .zero
-                return try generator.copyCGImage(at: time, actualTime: nil)
-            }.value
+            let generator = AVAssetImageGenerator(asset: asset)
+            generator.appliesPreferredTrackTransform = true
+            generator.requestedTimeToleranceBefore = .zero
+            generator.requestedTimeToleranceAfter = .zero
+            let cgImage = try generator.copyCGImage(at: time, actualTime: nil)
             frameImage = UIImage(cgImage: cgImage)
             pixelSize = CGSize(width: cgImage.width, height: cgImage.height)
         } catch {

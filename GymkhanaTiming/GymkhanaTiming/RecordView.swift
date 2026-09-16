@@ -26,10 +26,8 @@ struct RecordView: View {
                 .padding(.bottom, 30)
             }
         }
-        .onChange(of: camera.recordedURL) { url in
-            if let url {
-                onFinished(url)
-            }
+        .onAppear {
+            camera.onRecordingFinished = onFinished
         }
     }
 
