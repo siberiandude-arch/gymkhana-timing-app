@@ -246,18 +246,34 @@ enum VideoAnalyzer {
             }
 
             var mask = [UInt8](repeating: 0, count: roi.width * roi.height)
+            var maxDiff: Float = 0
+            var foregroundCount = 0
             for i in 0..<gray.count {
                 let diff = abs(gray[i] - bg[i])
-                mask[i] = diff > varThreshold ? 255 : 0
+                if diff > maxDiff { maxDiff = diff }
+                let isForeground = diff > varThreshold
+                mask[i] = isForeground ? 255 : 0
+                if isForeground { foregroundCount += 1 }
                 bg[i] = bg[i] * (1 - alpha) + gray[i] * alpha
             }
             background = bg
+
+            if frameIdx == 1 || frameIdx == 500 || frameIdx == 1000 {
+                let grayMin = gray.min() ?? -1, grayMax = gray.max() ?? -1
+                print("[VideoAnalyzer] diag frame \(frameIdx): gray=[\(grayMin),\(grayMax)] maxDiff=\(maxDiff) foregroundPx=\(foregroundCount)/\(gray.count)")
+            }
 
             // open (erode -> dilate, ядро 9x9), затем close (dilate -> erode, ядро 15x15)
             let opened = dilate(erode(mask, width: roi.width, height: roi.height, kernel: 9),
                                  width: roi.width, height: roi.height, kernel: 9)
             let closed = erode(dilate(opened, width: roi.width, height: roi.height, kernel: 15),
                                 width: roi.width, height: roi.height, kernel: 15)
+
+            if frameIdx == 1 || frameIdx == 500 || frameIdx == 1000 {
+                let closedFg = closed.reduce(0) { $0 + ($1 != 0 ? 1 : 0) }
+                let comp = largestComponent(mask: closed, width: roi.width, height: roi.height)
+                print("[VideoAnalyzer] diag frame \(frameIdx): closedFg=\(closedFg) largestComponentArea=\(comp?.area ?? -1)")
+            }
 
             guard frameIdx > 0,
                   let component = largestComponent(mask: closed, width: roi.width, height: roi.height),
