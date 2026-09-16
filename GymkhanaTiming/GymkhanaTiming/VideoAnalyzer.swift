@@ -82,9 +82,12 @@ enum VideoAnalyzer {
         let height = Int(naturalSize.height.rounded())
 
         let roi = makeROI(p1: p1, p2: p2, frameWidth: width, frameHeight: height)
+        print("[VideoAnalyzer] \(videoURL.lastPathComponent): \(width)x\(height), roi=\(roi.x0),\(roi.y0)-\(roi.x1),\(roi.y1)")
 
         let staticEndFrame = try detectStaticEnd(asset: asset, videoTrack: videoTrack)
+        print("[VideoAnalyzer] \(videoURL.lastPathComponent): staticEndFrame=\(staticEndFrame?.description ?? "nil")")
         let records = try trackMotorcycle(asset: asset, videoTrack: videoTrack, roi: roi, staticEndFrame: staticEndFrame)
+        print("[VideoAnalyzer] \(videoURL.lastPathComponent): trackMotorcycle done, \(records.count) detections")
         let crossings = analyzeCrossings(records: records, p1: p1, p2: p2)
 
         guard let (start, finish) = pickStartFinish(crossings: crossings) else {
@@ -230,6 +233,9 @@ enum VideoAnalyzer {
         while let sample = output.copyNextSampleBuffer() {
             if let staticEndFrame, frameIdx >= staticEndFrame { break }
             defer { frameIdx += 1 }
+            if frameIdx % 300 == 0 {
+                print("[VideoAnalyzer] trackMotorcycle: frame \(frameIdx), \(records.count) detections so far")
+            }
             guard let pixelBuffer = CMSampleBufferGetImageBuffer(sample) else { continue }
             let t = CMTimeGetSeconds(CMSampleBufferGetPresentationTimeStamp(sample))
             let gray = roiGrayscale(pixelBuffer, roi: roi)
@@ -371,13 +377,21 @@ enum VideoAnalyzer {
                 visited[idx] = true
                 while let (cx, cy) = stack.popLast() {
                     pixels.append((cx, cy))
-                    for (nx, ny) in [(cx - 1, cy), (cx + 1, cy), (cx, cy - 1), (cx, cy + 1)] {
-                        guard nx >= 0, nx < width, ny >= 0, ny < height else { continue }
-                        let nIdx = ny * width + nx
-                        if mask[nIdx] != 0 && !visited[nIdx] {
-                            visited[nIdx] = true
-                            stack.append((nx, ny))
-                        }
+                    if cx > 0, mask[cy * width + cx - 1] != 0, !visited[cy * width + cx - 1] {
+                        visited[cy * width + cx - 1] = true
+                        stack.append((cx - 1, cy))
+                    }
+                    if cx < width - 1, mask[cy * width + cx + 1] != 0, !visited[cy * width + cx + 1] {
+                        visited[cy * width + cx + 1] = true
+                        stack.append((cx + 1, cy))
+                    }
+                    if cy > 0, mask[(cy - 1) * width + cx] != 0, !visited[(cy - 1) * width + cx] {
+                        visited[(cy - 1) * width + cx] = true
+                        stack.append((cx, cy - 1))
+                    }
+                    if cy < height - 1, mask[(cy + 1) * width + cx] != 0, !visited[(cy + 1) * width + cx] {
+                        visited[(cy + 1) * width + cx] = true
+                        stack.append((cx, cy + 1))
                     }
                 }
                 if pixels.count > bestPixels.count {
