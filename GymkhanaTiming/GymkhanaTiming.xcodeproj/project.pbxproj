@@ -1,0 +1,356 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		7782A30AAF4770C3540FD560 /* GymkhanaTimingApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A3AB9245550F6C0B4FF13CD0 /* GymkhanaTimingApp.swift */; };
+		806B18200399B77ADA7B5172 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C988DBF254087524DD7F97D4 /* ContentView.swift */; };
+		83354F27B7499BBCD85EE7FB /* CameraController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 402038968BDF30663A6BCB1A /* CameraController.swift */; };
+		6B8DC69027C196FCE4DBD76A /* CameraPreviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BDD499A7C7D5F3F3E1542087 /* CameraPreviewView.swift */; };
+		A3BA8C2B28489EBF66671E32 /* RecordView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 88EF41871F85635D2D64AA5A /* RecordView.swift */; };
+		8FD1C50A2917CF357B865A62 /* CalibrationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 031CF9E70D23CE58D1C909A0 /* CalibrationView.swift */; };
+		77675DD56BABA435997E4D96 /* VideoAnalyzer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24CAC9AE58283E5C6C6D83FF /* VideoAnalyzer.swift */; };
+		224258151BF9D4D93B47DC24 /* ResultView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5DBB00629726EE9753DCD34F /* ResultView.swift */; };
+		7843DD7DEDD952CC90EBCB90 /* AVFoundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 6780860DDE0B16C9029DB5D4 /* AVFoundation.framework */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		EF06ECE254346DE247D6FF8E /* GymkhanaTiming.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = GymkhanaTiming.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A3AB9245550F6C0B4FF13CD0 /* GymkhanaTimingApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GymkhanaTimingApp.swift; sourceTree = "<group>"; };
+		C988DBF254087524DD7F97D4 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		402038968BDF30663A6BCB1A /* CameraController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CameraController.swift; sourceTree = "<group>"; };
+		BDD499A7C7D5F3F3E1542087 /* CameraPreviewView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CameraPreviewView.swift; sourceTree = "<group>"; };
+		88EF41871F85635D2D64AA5A /* RecordView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordView.swift; sourceTree = "<group>"; };
+		031CF9E70D23CE58D1C909A0 /* CalibrationView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalibrationView.swift; sourceTree = "<group>"; };
+		24CAC9AE58283E5C6C6D83FF /* VideoAnalyzer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoAnalyzer.swift; sourceTree = "<group>"; };
+		5DBB00629726EE9753DCD34F /* ResultView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResultView.swift; sourceTree = "<group>"; };
+		E7246A8D306D1D8179347DEC /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		6780860DDE0B16C9029DB5D4 /* AVFoundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AVFoundation.framework; path = System/Library/Frameworks/AVFoundation.framework; sourceTree = SDKROOT; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		97DE38BD4DC102494DD1113B /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				7843DD7DEDD952CC90EBCB90 /* AVFoundation.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		1C3BA98C0BB599D8F691979C = {
+			isa = PBXGroup;
+			children = (
+				2631F0B7E1B2939AEC326714 /* GymkhanaTiming */,
+				82A31F6453B19648A0BFEB87 /* Frameworks */,
+				A413CFFC728BBFDAA9E46467 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		A413CFFC728BBFDAA9E46467 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				EF06ECE254346DE247D6FF8E /* GymkhanaTiming.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		82A31F6453B19648A0BFEB87 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				6780860DDE0B16C9029DB5D4 /* AVFoundation.framework */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
+		2631F0B7E1B2939AEC326714 /* GymkhanaTiming */ = {
+			isa = PBXGroup;
+			children = (
+				A3AB9245550F6C0B4FF13CD0 /* GymkhanaTimingApp.swift */,
+				C988DBF254087524DD7F97D4 /* ContentView.swift */,
+				402038968BDF30663A6BCB1A /* CameraController.swift */,
+				BDD499A7C7D5F3F3E1542087 /* CameraPreviewView.swift */,
+				88EF41871F85635D2D64AA5A /* RecordView.swift */,
+				031CF9E70D23CE58D1C909A0 /* CalibrationView.swift */,
+				24CAC9AE58283E5C6C6D83FF /* VideoAnalyzer.swift */,
+				5DBB00629726EE9753DCD34F /* ResultView.swift */,
+				E7246A8D306D1D8179347DEC /* Info.plist */,
+			);
+			path = GymkhanaTiming;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		1D286180519095965361D676 /* GymkhanaTiming */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = F9B5041A83FC9FC5419F6A1E /* Build configuration list for PBXNativeTarget "GymkhanaTiming" */;
+			buildPhases = (
+				7BE0EB329D672DE498593F8B /* Sources */,
+				97DE38BD4DC102494DD1113B /* Frameworks */,
+				7CC7ED6C13872DC36117A724 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = GymkhanaTiming;
+			productName = GymkhanaTiming;
+			productReference = EF06ECE254346DE247D6FF8E /* GymkhanaTiming.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		E13FE669D8176D07417FD0E9 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 1500;
+				LastUpgradeCheck = 1500;
+				TargetAttributes = {
+					1D286180519095965361D676 = {
+						CreatedOnToolsVersion = 15.0;
+					};
+				};
+			};
+			buildConfigurationList = 22BF9D3501DEECE53032B53A /* Build configuration list for PBXProject "GymkhanaTiming" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = 1C3BA98C0BB599D8F691979C;
+			productRefGroup = A413CFFC728BBFDAA9E46467 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				1D286180519095965361D676 /* GymkhanaTiming */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		7CC7ED6C13872DC36117A724 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		7BE0EB329D672DE498593F8B /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				7782A30AAF4770C3540FD560 /* GymkhanaTimingApp.swift in Sources */,
+				806B18200399B77ADA7B5172 /* ContentView.swift in Sources */,
+				83354F27B7499BBCD85EE7FB /* CameraController.swift in Sources */,
+				6B8DC69027C196FCE4DBD76A /* CameraPreviewView.swift in Sources */,
+				A3BA8C2B28489EBF66671E32 /* RecordView.swift in Sources */,
+				8FD1C50A2917CF357B865A62 /* CalibrationView.swift in Sources */,
+				77675DD56BABA435997E4D96 /* VideoAnalyzer.swift in Sources */,
+				224258151BF9D4D93B47DC24 /* ResultView.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		9F48533E894BA9961B260B84 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		1F76345B1DBC47BBB5D3E5E3 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		4B624BE49B688E3162ABB0B7 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = GymkhanaTiming/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "com.gymkhanatiming.prototype";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		6A67AE9FD367BBEC77F5732E /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = GymkhanaTiming/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "com.gymkhanatiming.prototype";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		22BF9D3501DEECE53032B53A /* Build configuration list for PBXProject "GymkhanaTiming" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				9F48533E894BA9961B260B84 /* Debug */,
+				1F76345B1DBC47BBB5D3E5E3 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		F9B5041A83FC9FC5419F6A1E /* Build configuration list for PBXNativeTarget "GymkhanaTiming" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				4B624BE49B688E3162ABB0B7 /* Debug */,
+				6A67AE9FD367BBEC77F5732E /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = E13FE669D8176D07417FD0E9 /* Project object */;
+}
