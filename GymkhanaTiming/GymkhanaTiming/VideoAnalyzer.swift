@@ -81,14 +81,25 @@ enum VideoAnalyzer {
         let width = Int(naturalSize.width.rounded())
         let height = Int(naturalSize.height.rounded())
 
-        let roi = makeROI(p1: p1, p2: p2, frameWidth: width, frameHeight: height)
-        print("[VideoAnalyzer] \(videoURL.lastPathComponent): \(width)x\(height), roi=\(roi.x0),\(roi.y0)-\(roi.x1),\(roi.y1)")
+        // Все геометрические константы ниже (отступ ROI, минимальная площадь
+        // пятна, порог "настоящего проезда", ядра морфологии) подобраны и
+        // провалидированы на кадре 1920x1080 — том, что даёт стандартная
+        // съёмка (см. CameraController: sessionPreset = .hd1920x1080). Если
+        // фактическое разрешение видео другое (например, сжатая копия для
+        // тестов, или другая камера/пресет), их нужно пропорционально
+        // пересчитать, иначе на вдвое уменьшенном кадре реальный байк займёт
+        // вчетверо меньше пикселей, чем ожидает порог площади — и трекинг
+        // почти ничего не найдёт.
+        let scale = Double(width) / 1920.0
+
+        let roi = makeROI(p1: p1, p2: p2, frameWidth: width, frameHeight: height, scale: scale)
+        print("[VideoAnalyzer] \(videoURL.lastPathComponent): \(width)x\(height), scale=\(scale), roi=\(roi.x0),\(roi.y0)-\(roi.x1),\(roi.y1)")
 
         let staticEndFrame = try detectStaticEnd(asset: asset, videoTrack: videoTrack)
         print("[VideoAnalyzer] \(videoURL.lastPathComponent): staticEndFrame=\(staticEndFrame?.description ?? "nil")")
-        let records = try trackMotorcycle(asset: asset, videoTrack: videoTrack, roi: roi, staticEndFrame: staticEndFrame)
+        let records = try trackMotorcycle(asset: asset, videoTrack: videoTrack, roi: roi, staticEndFrame: staticEndFrame, scale: scale)
         print("[VideoAnalyzer] \(videoURL.lastPathComponent): trackMotorcycle done, \(records.count) detections")
-        let crossings = analyzeCrossings(records: records, p1: p1, p2: p2)
+        let crossings = analyzeCrossings(records: records, p1: p1, p2: p2, areaThresh: 8000 * scale * scale)
 
         guard let (start, finish) = pickStartFinish(crossings: crossings) else {
             throw AnalyzerError.noStartFinishFound
@@ -96,10 +107,19 @@ enum VideoAnalyzer {
         return AnalysisResult(start: start, finish: finish, lap: finish - start, crossings: crossings)
     }
 
+    /// Ближайшее нечётное число (округление вниз, если между двумя нечётными) —
+    /// для масштабирования размера ядра морфологии. При scale=1.0 (эталонное
+    /// 1920x1080) возвращает исходные 9/15 без изменений.
+    private static func nearestOdd(_ x: Double) -> Int {
+        let v = Int(x)
+        return v % 2 == 0 ? v + 1 : v
+    }
+
     // MARK: - Шаг 2 (из спецификации): область наблюдения вокруг створа
 
-    private static func makeROI(p1: CGPoint, p2: CGPoint, frameWidth: Int, frameHeight: Int,
-                                 padX: Int = 300, padY: Int = 250) -> ROI {
+    private static func makeROI(p1: CGPoint, p2: CGPoint, frameWidth: Int, frameHeight: Int, scale: Double) -> ROI {
+        let padX = Int((300 * scale).rounded())
+        let padY = Int((250 * scale).rounded())
         let minX = Int(min(p1.x, p2.x)) - padX
         let maxX = Int(max(p1.x, p2.x)) + padX
         let minY = Int(min(p1.y, p2.y)) - padY
@@ -207,7 +227,7 @@ enum VideoAnalyzer {
     // MARK: - Шаг 3: трекинг мотоцикла в ROI
 
     private static func trackMotorcycle(asset: AVURLAsset, videoTrack: AVAssetTrack, roi: ROI,
-                                         staticEndFrame: Int?) throws -> [DetectionRecord] {
+                                         staticEndFrame: Int?, scale: Double) throws -> [DetectionRecord] {
         let reader = try AVAssetReader(asset: asset)
         let settings: [String: Any] = [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA]
         let output = AVAssetReaderTrackOutput(track: videoTrack, outputSettings: settings)
@@ -218,6 +238,9 @@ enum VideoAnalyzer {
         var background: [Float]?
         var records: [DetectionRecord] = []
         var frameIdx = 0
+        let openKernel = nearestOdd(9 * scale)
+        let closeKernel = nearestOdd(15 * scale)
+        let bandPx = Int((15 * scale).rounded())
         // Подобрано валидацией на 4 реальных заездах (см. README): при alpha=0.05
         // скользящее среднее слишком медленно "забывает" байк — низкоскоростной/
         // покачивающийся участок у линии остаётся в фоне ещё десятки кадров,
@@ -228,7 +251,7 @@ enum VideoAnalyzer {
         // диапазон python-версии (~0.2–0.4с при той же связке порогов).
         let varThreshold: Float = 28
         let alpha: Float = 0.25
-        let minArea = 300
+        let minArea = Int((300 * scale * scale).rounded())
 
         while let sample = output.copyNextSampleBuffer() {
             if let staticEndFrame, frameIdx >= staticEndFrame { break }
@@ -246,34 +269,19 @@ enum VideoAnalyzer {
             }
 
             var mask = [UInt8](repeating: 0, count: roi.width * roi.height)
-            var maxDiff: Float = 0
-            var foregroundCount = 0
             for i in 0..<gray.count {
                 let diff = abs(gray[i] - bg[i])
-                if diff > maxDiff { maxDiff = diff }
-                let isForeground = diff > varThreshold
-                mask[i] = isForeground ? 255 : 0
-                if isForeground { foregroundCount += 1 }
+                mask[i] = diff > varThreshold ? 255 : 0
                 bg[i] = bg[i] * (1 - alpha) + gray[i] * alpha
             }
             background = bg
 
-            if frameIdx == 1 || frameIdx == 500 || frameIdx == 1000 {
-                let grayMin = gray.min() ?? -1, grayMax = gray.max() ?? -1
-                print("[VideoAnalyzer] diag frame \(frameIdx): gray=[\(grayMin),\(grayMax)] maxDiff=\(maxDiff) foregroundPx=\(foregroundCount)/\(gray.count)")
-            }
-
-            // open (erode -> dilate, ядро 9x9), затем close (dilate -> erode, ядро 15x15)
-            let opened = dilate(erode(mask, width: roi.width, height: roi.height, kernel: 9),
-                                 width: roi.width, height: roi.height, kernel: 9)
-            let closed = erode(dilate(opened, width: roi.width, height: roi.height, kernel: 15),
-                                width: roi.width, height: roi.height, kernel: 15)
-
-            if frameIdx == 1 || frameIdx == 500 || frameIdx == 1000 {
-                let closedFg = closed.reduce(0) { $0 + ($1 != 0 ? 1 : 0) }
-                let comp = largestComponent(mask: closed, width: roi.width, height: roi.height)
-                print("[VideoAnalyzer] diag frame \(frameIdx): closedFg=\(closedFg) largestComponentArea=\(comp?.area ?? -1)")
-            }
+            // open (erode -> dilate), затем close (dilate -> erode) — размеры ядра
+            // масштабированы под фактическое разрешение, см. комментарий в analyze()
+            let opened = dilate(erode(mask, width: roi.width, height: roi.height, kernel: openKernel),
+                                 width: roi.width, height: roi.height, kernel: openKernel)
+            let closed = erode(dilate(opened, width: roi.width, height: roi.height, kernel: closeKernel),
+                                width: roi.width, height: roi.height, kernel: closeKernel)
 
             guard frameIdx > 0,
                   let component = largestComponent(mask: closed, width: roi.width, height: roi.height),
@@ -288,7 +296,7 @@ enum VideoAnalyzer {
             let cx = Double(sumX) / Double(component.pixels.count) + Double(roi.x0)
             let cy = Double(sumY) / Double(component.pixels.count) + Double(roi.y0)
 
-            let band = component.pixels.filter { $0.1 >= yMax - 15 }
+            let band = component.pixels.filter { $0.1 >= yMax - bandPx }
             guard let leftPixel = band.min(by: { $0.0 < $1.0 }),
                   let rightPixel = band.max(by: { $0.0 < $1.0 }) else { continue }
 
