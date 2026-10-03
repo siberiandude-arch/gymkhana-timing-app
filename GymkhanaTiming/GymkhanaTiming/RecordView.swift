@@ -17,11 +17,25 @@ struct RecordView: View {
                         .padding(8)
                         .background(Color.black.opacity(0.6))
                 }
+                // Классическая "кнопка-затвор": белое кольцо снаружи, внутри —
+                // красный кружок в режиме ожидания и красный квадрат во время
+                // записи (как в системной Камере) — предыдущий вариант (просто
+                // залитый белый круг) не читался как кнопка записи вообще.
                 Button(action: toggleRecording) {
-                    Circle()
-                        .fill(camera.isRecording ? Color.red : Color.white)
-                        .frame(width: 74, height: 74)
-                        .overlay(Circle().stroke(Color.white, lineWidth: 4).padding(4))
+                    ZStack {
+                        Circle()
+                            .strokeBorder(Color.white, lineWidth: 4)
+                            .frame(width: 74, height: 74)
+                        if camera.isRecording {
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(Color.red)
+                                .frame(width: 30, height: 30)
+                        } else {
+                            Circle()
+                                .fill(Color.red)
+                                .frame(width: 60, height: 60)
+                        }
+                    }
                 }
                 .padding(.bottom, 30)
             }
