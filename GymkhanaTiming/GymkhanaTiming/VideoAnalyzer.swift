@@ -511,16 +511,32 @@ enum VideoAnalyzer {
     /// Старт и финиш — это один и тот же физический створ, через который
     /// едут в обе стороны: выезжая на упражнение и возвращаясь обратно.
     /// Направление проезда (знак расстояния до линии непосредственно перед
-    /// пересечением) у выезда и у возврата, как правило, противоположно, так
-    /// что направление первого пересечения в видео принимается за "выезд",
-    /// а противоположное — за "возврат".
+    /// пересечением) у выезда и у возврата, как правило, противоположно.
     ///
     /// Если райдер выехал, но вернулся не через створ (срезал по внешнему
     /// контуру), следующее пересечение будет снова в направлении "выезда" —
     /// предыдущая попытка в этом случае считается незавершённой (finish=nil),
     /// а не отбрасывается молча.
-    private static func pairLaps(crossings: [Crossing]) -> [LapAttempt] {
-        guard let startDirection = crossings.first?.fromPositiveSide else { return [] }
+    ///
+    /// minLapDuration отсекает дребезг трекинга прямо у створа — две
+    /// фиктивные пересечки туда-обратно за доли секунды иначе засчитывались
+    /// бы как мгновенный "заезд". Ни одно реальное упражнение не проезжается
+    /// быстрее пары секунд, так что порог взят с большим запасом.
+    ///
+    /// Направление "выезда" берётся НЕ у самого первого пересечения в видео,
+    /// а у последнего пересечения в первой "пачке" (все пересечения в
+    /// пределах minLapDuration друг от друга перед самым первым разрывом) —
+    /// на старте байк иногда покачивается туда-сюда через линию перед тем,
+    /// как окончательно уехать, и то самое первое пересечение в видео может
+    /// оказаться предварительным покачиванием НЕ в ту сторону (проверено на
+    /// реальных тестовых видео: 2 из 4 начинаются именно так).
+    private static func pairLaps(crossings: [Crossing], minLapDuration: Double = 2.0) -> [LapAttempt] {
+        guard !crossings.isEmpty else { return [] }
+        var burstEnd = 0
+        while burstEnd + 1 < crossings.count, crossings[burstEnd + 1].time - crossings[burstEnd].time < minLapDuration {
+            burstEnd += 1
+        }
+        let startDirection = crossings[burstEnd].fromPositiveSide
 
         var laps: [LapAttempt] = []
         var pendingStart: Double?
@@ -530,10 +546,13 @@ enum VideoAnalyzer {
                     laps.append(LapAttempt(index: laps.count + 1, start: unfinished, finish: nil))
                 }
                 pendingStart = crossing.time
-            } else if let started = pendingStart {
+            } else if let started = pendingStart, crossing.time - started >= minLapDuration {
                 laps.append(LapAttempt(index: laps.count + 1, start: started, finish: crossing.time))
                 pendingStart = nil
             }
+            // иначе: пересечение в обратном направлении слишком скоро после
+            // старта — дребезг, а не настоящий финиш; игнорируем его и
+            // продолжаем ждать настоящий финиш для текущего pendingStart.
         }
         if let unfinished = pendingStart {
             laps.append(LapAttempt(index: laps.count + 1, start: unfinished, finish: nil))
