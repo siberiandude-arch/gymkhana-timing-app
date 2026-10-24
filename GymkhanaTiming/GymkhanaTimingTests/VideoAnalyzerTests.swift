@@ -62,15 +62,19 @@ final class VideoAnalyzerTests: XCTestCase {
             }
 
             do {
-                let result = try await VideoAnalyzer.analyze(videoURL: url, p1: testCase.p1, p2: testCase.p2)
-                let diff = result.lap - testCase.referenceSeconds
-                print(String(format: "[%@] круг=%.3fс старт=%.3fс финиш=%.3fс референс=%.2fс разница=%+.3fс пересечений=%d",
-                             testCase.videoName, result.lap, result.start, result.finish,
-                             testCase.referenceSeconds, diff, result.crossings.count))
+                let laps = try await VideoAnalyzer.analyze(videoURL: url, p1: testCase.p1, p2: testCase.p2)
+                guard let lap = laps.first(where: { $0.finish != nil }), let duration = lap.duration else {
+                    failures.append("\(testCase.videoName): не найден завершённый заезд (попыток: \(laps.count))")
+                    continue
+                }
+                let diff = duration - testCase.referenceSeconds
+                print(String(format: "[%@] круг=%.3fс старт=%.3fс финиш=%.3fс референс=%.2fс разница=%+.3fс всего попыток=%d",
+                             testCase.videoName, duration, lap.start, lap.finish ?? -1,
+                             testCase.referenceSeconds, diff, laps.count))
 
                 if abs(diff) > maxAllowedError {
                     failures.append(String(format: "%@: круг=%.3fс, референс=%.2fс, разница=%+.3fс (допуск ±%.1fс)",
-                                            testCase.videoName, result.lap, testCase.referenceSeconds, diff, maxAllowedError))
+                                            testCase.videoName, duration, testCase.referenceSeconds, diff, maxAllowedError))
                 }
             } catch {
                 failures.append("\(testCase.videoName): VideoAnalyzer выбросил ошибку — \(error)")

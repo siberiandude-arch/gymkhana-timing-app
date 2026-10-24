@@ -32,11 +32,25 @@ struct DetectionRecord {
     let rightBottom: CGPoint
 }
 
-struct AnalysisResult {
+/// Один проезд через створ: от выезда со старта до возврата в створ.
+/// `finish == nil` значит райдер выехал, но не вернулся через створ повторно —
+/// например, срезал на упражнении и заехал в стартовые ворота по внешнему
+/// контуру, не пересекая саму линию (см. pairLaps).
+struct LapAttempt: Identifiable {
+    let id = UUID()
+    let index: Int
     let start: Double
-    let finish: Double
-    let lap: Double
-    let crossings: [Double]
+    let finish: Double?
+
+    var duration: Double? { finish.map { $0 - start } }
+}
+
+private struct Crossing {
+    let time: Double
+    /// Знаковое расстояние до линии было положительным непосредственно перед
+    /// пересечением — используется только как метка направления проезда
+    /// (см. pairLaps), само значение смысла не несёт.
+    let fromPositiveSide: Bool
 }
 
 enum AnalyzerError: Error {
@@ -58,7 +72,7 @@ enum VideoAnalyzer {
 
     // MARK: - Публичная точка входа
 
-    static func analyze(videoURL: URL, p1: CGPoint, p2: CGPoint) async throws -> AnalysisResult {
+    static func analyze(videoURL: URL, p1: CGPoint, p2: CGPoint) async throws -> [LapAttempt] {
         let asset = AVURLAsset(url: videoURL)
         guard let videoTrack = try await asset.loadTracks(withMediaType: .video).first else {
             throw AnalyzerError.noVideoTrack
@@ -101,10 +115,11 @@ enum VideoAnalyzer {
         print("[VideoAnalyzer] \(videoURL.lastPathComponent): trackMotorcycle done, \(records.count) detections")
         let crossings = analyzeCrossings(records: records, p1: p1, p2: p2, areaThresh: 8000 * scale * scale)
 
-        guard let (start, finish) = pickStartFinish(crossings: crossings) else {
+        let laps = pairLaps(crossings: crossings)
+        guard !laps.isEmpty else {
             throw AnalyzerError.noStartFinishFound
         }
-        return AnalysisResult(start: start, finish: finish, lap: finish - start, crossings: crossings)
+        return laps
     }
 
     /// Ближайшее нечётное число (округление вниз, если между двумя нечётными) —
@@ -429,7 +444,7 @@ enum VideoAnalyzer {
     // MARK: - Шаг 4: знаковое расстояние, сегменты, пересечения
 
     private static func analyzeCrossings(records: [DetectionRecord], p1: CGPoint, p2: CGPoint,
-                                          areaThresh: Double = 8000) -> [Double] {
+                                          areaThresh: Double = 8000) -> [Crossing] {
         guard !records.isEmpty else { return [] }
 
         let d = CGPoint(x: p2.x - p1.x, y: p2.y - p1.y)
@@ -457,7 +472,7 @@ enum VideoAnalyzer {
             (records[seg.start...seg.end].map { Double($0.area) }.max() ?? 0) > areaThresh
         }
 
-        var crossings: [Double] = []
+        var crossings: [Crossing] = []
         for seg in realSegments {
             let segRecords = Array(records[seg.start...seg.end])
             guard segRecords.count > 1 else { continue }
@@ -484,19 +499,45 @@ enum VideoAnalyzer {
                 if (d0 > 0) != (d1 > 0) {
                     let t0 = segRecords[i - 1].t, t1 = segRecords[i].t
                     let frac = -d0 / (d1 - d0)
-                    crossings.append(t0 + frac * (t1 - t0))
+                    crossings.append(Crossing(time: t0 + frac * (t1 - t0), fromPositiveSide: d0 > 0))
                 }
             }
         }
-        return crossings.sorted()
+        return crossings.sorted { $0.time < $1.time }
     }
 
-    // MARK: - Шаг 5: выбор старта и финиша
+    // MARK: - Шаг 5: группировка пересечений в заезды (старт → финиш)
 
-    private static func pickStartFinish(crossings: [Double], splitSeconds: Double = 10.0) -> (Double, Double)? {
-        let startCandidates = crossings.filter { $0 < splitSeconds }
-        let finishCandidates = crossings.filter { $0 >= splitSeconds }
-        guard let start = startCandidates.max(), let finish = finishCandidates.min() else { return nil }
-        return (start, finish)
+    /// Старт и финиш — это один и тот же физический створ, через который
+    /// едут в обе стороны: выезжая на упражнение и возвращаясь обратно.
+    /// Направление проезда (знак расстояния до линии непосредственно перед
+    /// пересечением) у выезда и у возврата, как правило, противоположно, так
+    /// что направление первого пересечения в видео принимается за "выезд",
+    /// а противоположное — за "возврат".
+    ///
+    /// Если райдер выехал, но вернулся не через створ (срезал по внешнему
+    /// контуру), следующее пересечение будет снова в направлении "выезда" —
+    /// предыдущая попытка в этом случае считается незавершённой (finish=nil),
+    /// а не отбрасывается молча.
+    private static func pairLaps(crossings: [Crossing]) -> [LapAttempt] {
+        guard let startDirection = crossings.first?.fromPositiveSide else { return [] }
+
+        var laps: [LapAttempt] = []
+        var pendingStart: Double?
+        for crossing in crossings {
+            if crossing.fromPositiveSide == startDirection {
+                if let pendingStart {
+                    laps.append(LapAttempt(index: laps.count + 1, start: pendingStart, finish: nil))
+                }
+                pendingStart = crossing.time
+            } else if let pendingStart {
+                laps.append(LapAttempt(index: laps.count + 1, start: pendingStart, finish: crossing.time))
+                pendingStart = nil
+            }
+        }
+        if let pendingStart {
+            laps.append(LapAttempt(index: laps.count + 1, start: pendingStart, finish: nil))
+        }
+        return laps
     }
 }

@@ -8,7 +8,7 @@ enum Stage {
     case record
     case calibrate(videoURL: URL)
     case analyzing(videoURL: URL, p1: CGPoint, p2: CGPoint)
-    case result(AnalysisResult, videoURL: URL, p1: CGPoint, p2: CGPoint)
+    case result([LapAttempt], videoURL: URL, p1: CGPoint, p2: CGPoint)
     case error(String)
 }
 
@@ -83,8 +83,8 @@ struct ContentView: View {
                 Text("Считаю время...")
             }
 
-        case .result(let result, let videoURL, let p1, let p2):
-            ResultView(result: result, videoURL: videoURL, p1: p1, p2: p2) {
+        case .result(let laps, let videoURL, let p1, let p2):
+            ResultView(laps: laps, videoURL: videoURL, p1: p1, p2: p2) {
                 stage = .start
             }
 
@@ -100,8 +100,8 @@ struct ContentView: View {
     private func runAnalysis(videoURL: URL, p1: CGPoint, p2: CGPoint) {
         Task {
             do {
-                let result = try await VideoAnalyzer.analyze(videoURL: videoURL, p1: p1, p2: p2)
-                await MainActor.run { stage = .result(result, videoURL: videoURL, p1: p1, p2: p2) }
+                let laps = try await VideoAnalyzer.analyze(videoURL: videoURL, p1: p1, p2: p2)
+                await MainActor.run { stage = .result(laps, videoURL: videoURL, p1: p1, p2: p2) }
             } catch {
                 await MainActor.run { stage = .error("\(error)") }
             }
