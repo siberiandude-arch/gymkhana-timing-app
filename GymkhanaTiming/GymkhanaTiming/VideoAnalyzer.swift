@@ -526,17 +526,17 @@ enum VideoAnalyzer {
         var pendingStart: Double?
         for crossing in crossings {
             if crossing.fromPositiveSide == startDirection {
-                if let pendingStart {
-                    laps.append(LapAttempt(index: laps.count + 1, start: pendingStart, finish: nil))
+                if let unfinished = pendingStart {
+                    laps.append(LapAttempt(index: laps.count + 1, start: unfinished, finish: nil))
                 }
                 pendingStart = crossing.time
-            } else if let pendingStart {
-                laps.append(LapAttempt(index: laps.count + 1, start: pendingStart, finish: crossing.time))
+            } else if let started = pendingStart {
+                laps.append(LapAttempt(index: laps.count + 1, start: started, finish: crossing.time))
                 pendingStart = nil
             }
         }
-        if let pendingStart {
-            laps.append(LapAttempt(index: laps.count + 1, start: pendingStart, finish: nil))
+        if let unfinished = pendingStart {
+            laps.append(LapAttempt(index: laps.count + 1, start: unfinished, finish: nil))
         }
         return laps
     }
