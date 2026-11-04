@@ -374,46 +374,73 @@ enum VideoAnalyzer {
         minMaxFilter(mask, width: width, height: height, kernel: kernel, isErode: false)
     }
 
+    /// Раньше это был наивный перебор окна на каждый пиксель — O(width*kernel)
+    /// на строку/столбец. Морфология гоняется 4 раза на кадр (open=erode+
+    /// dilate, close=dilate+erode) и оказалась основным, на что уходило
+    /// время обработки видео (~1.5 минуты на 70-секундный заезд). Скользящее
+    /// окно через монотонную очередь (van Herk/Gil-Werman) даёт ТОЧНО ТЕ ЖЕ
+    /// значения за O(width) амортизированно — не аппроксимация, а то же самое
+    /// min/max с теми же клэмпами на границе, просто быстрее их считать.
     private static func minMaxFilter(_ mask: [UInt8], width: Int, height: Int, kernel: Int, isErode: Bool) -> [UInt8] {
         let r = kernel / 2
         var horizontal = [UInt8](repeating: 0, count: width * height)
         mask.withUnsafeBufferPointer { src in
             horizontal.withUnsafeMutableBufferPointer { dst in
+                var dq = [Int](repeating: 0, count: width)
                 for y in 0..<height {
                     let rowBase = y * width
-                    for x in 0..<width {
-                        var value: UInt8 = isErode ? 255 : 0
-                        let xStart = max(0, x - r), xEnd = min(width - 1, x + r)
-                        var i = xStart
-                        while i <= xEnd {
-                            let v = src[rowBase + i]
-                            if isErode { if v < value { value = v } } else { if v > value { value = v } }
-                            i += 1
-                        }
-                        dst[rowBase + x] = value
-                    }
+                    slidingMinMax(src, base: rowBase, stride: 1, count: width, radius: r,
+                                  isMin: isErode, dq: &dq, dst: dst, dstBase: rowBase, dstStride: 1)
                 }
             }
         }
         var result = [UInt8](repeating: 0, count: width * height)
         horizontal.withUnsafeBufferPointer { src in
             result.withUnsafeMutableBufferPointer { dst in
+                var dq = [Int](repeating: 0, count: height)
                 for x in 0..<width {
-                    for y in 0..<height {
-                        var value: UInt8 = isErode ? 255 : 0
-                        let yStart = max(0, y - r), yEnd = min(height - 1, y + r)
-                        var i = yStart
-                        while i <= yEnd {
-                            let v = src[i * width + x]
-                            if isErode { if v < value { value = v } } else { if v > value { value = v } }
-                            i += 1
-                        }
-                        dst[y * width + x] = value
-                    }
+                    slidingMinMax(src, base: x, stride: width, count: height, radius: r,
+                                  isMin: isErode, dq: &dq, dst: dst, dstBase: x, dstStride: width)
                 }
             }
         }
         return result
+    }
+
+    /// Скользящий минимум/максимум вдоль одной строки или столбца буфера
+    /// (base+stride задают с чего начать и с каким шагом идти — так одна
+    /// функция обслуживает и горизонтальный, и вертикальный проход). Очередь
+    /// `dq` хранит индексы с монотонно растущими/убывающими значениями —
+    /// голова очереди всегда даёт min/max текущего окна, каждый индекс
+    /// добавляется и убирается из очереди не больше одного раза за проход.
+    private static func slidingMinMax(_ src: UnsafeBufferPointer<UInt8>, base: Int, stride: Int, count: Int,
+                                       radius: Int, isMin: Bool, dq: inout [Int],
+                                       dst: UnsafeMutableBufferPointer<UInt8>, dstBase: Int, dstStride: Int) {
+        var head = 0, tail = 0
+        for i in 0..<count {
+            let v = src[base + i * stride]
+            while tail > head {
+                let backVal = src[base + dq[tail - 1] * stride]
+                if isMin ? (backVal >= v) : (backVal <= v) {
+                    tail -= 1
+                } else {
+                    break
+                }
+            }
+            dq[tail] = i
+            tail += 1
+            let center = i - radius
+            if center >= 0 {
+                while dq[head] < center - radius { head += 1 }
+                dst[dstBase + center * dstStride] = src[base + dq[head] * stride]
+            }
+        }
+        var center = max(0, count - radius)
+        while center < count {
+            while dq[head] < center - radius { head += 1 }
+            dst[dstBase + center * dstStride] = src[base + dq[head] * stride]
+            center += 1
+        }
     }
 
     // MARK: - Связные компоненты (аналог "самый большой контур")
