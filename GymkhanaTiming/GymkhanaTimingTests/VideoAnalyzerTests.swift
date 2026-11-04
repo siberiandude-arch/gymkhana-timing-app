@@ -62,7 +62,8 @@ final class VideoAnalyzerTests: XCTestCase {
             }
 
             do {
-                let laps = try await VideoAnalyzer.analyze(videoURL: url, p1: testCase.p1, p2: testCase.p2)
+                let output = try await VideoAnalyzer.analyze(videoURL: url, p1: testCase.p1, p2: testCase.p2)
+                let laps = output.laps
                 guard let lap = laps.first(where: { $0.finish != nil }), let duration = lap.duration else {
                     failures.append("\(testCase.videoName): не найден завершённый заезд (попыток: \(laps.count))")
                     continue

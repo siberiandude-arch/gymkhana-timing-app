@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct ResultView: View {
-    let laps: [LapAttempt]
+    let output: AnalysisOutput
     let videoURL: URL
     let p1: CGPoint
     let p2: CGPoint
@@ -9,14 +9,36 @@ struct ResultView: View {
 
     var body: some View {
         NavigationStack {
-            List(laps) { lap in
-                NavigationLink {
-                    LapDetailView(lap: lap, videoURL: videoURL, p1: p1, p2: p2)
-                } label: {
-                    LapRow(lap: lap)
+            List {
+                Section {
+                    ForEach(output.laps) { lap in
+                        NavigationLink {
+                            LapDetailView(lap: lap, videoURL: videoURL, p1: p1, p2: p2)
+                        } label: {
+                            LapRow(lap: lap)
+                        }
+                    }
+                }
+
+                // Сырой список пересечений створа — чтобы можно было
+                // разобраться, почему заезд не состыковался (нет финиша,
+                // лишние попытки), не выковыривая видео и логи вручную.
+                Section("Отладка: пересечения створа (\(output.crossings.count))") {
+                    DisclosureGroup("Показать") {
+                        ForEach(output.crossings) { crossing in
+                            HStack {
+                                Text(String(format: "%.3f с", crossing.time))
+                                    .font(.system(.footnote, design: .monospaced))
+                                Spacer()
+                                Text(crossing.isExit ? "выезд →" : "← возврат")
+                                    .font(.footnote)
+                                    .foregroundColor(crossing.isExit ? .orange : .blue)
+                            }
+                        }
+                    }
                 }
             }
-            .navigationTitle("Заезды (\(laps.count))")
+            .navigationTitle("Заезды (\(output.laps.count))")
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button("Новая сессия", action: onRestart)
@@ -31,14 +53,18 @@ private struct LapRow: View {
 
     var body: some View {
         HStack {
+            Image(systemName: lap.duration != nil ? "flag.checkered" : "xmark.circle")
+                .foregroundColor(lap.duration != nil ? AppTheme.accent : AppTheme.textSecondary)
             Text("Заезд \(lap.index)")
+                .font(.appHeadline(16))
             Spacer()
             if let duration = lap.duration {
                 Text(String(format: "%.3f с", duration))
-                    .font(.system(.body, design: .monospaced))
+                    .font(.system(.body, design: .monospaced).bold())
+                    .foregroundColor(AppTheme.accent)
             } else {
                 Text("не завершён")
-                    .foregroundColor(.secondary)
+                    .foregroundColor(AppTheme.textSecondary)
                     .italic()
             }
         }

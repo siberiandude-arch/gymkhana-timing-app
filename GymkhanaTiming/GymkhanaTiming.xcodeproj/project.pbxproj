@@ -23,6 +23,7 @@
 		BB0EBA2C3A6084DB35D6347E /* PhotoLibrarySaver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7025BCB82FE71D4E47176E8B /* PhotoLibrarySaver.swift */; };
 		0A4B1A7283D77270705E6F85 /* ShareSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6CAF32598C3D682A50FFB866 /* ShareSheet.swift */; };
 		B7D7B4BEE9AC9E56BF16C599 /* LapDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 25134A1D7529B9A33AE76DF4 /* LapDetailView.swift */; };
+		3398E8DE22B203A26D6FE7DC /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = AABC013ECCA795D3BB7B56EC /* Theme.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -45,6 +46,7 @@
 		7025BCB82FE71D4E47176E8B /* PhotoLibrarySaver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoLibrarySaver.swift; sourceTree = "<group>"; };
 		6CAF32598C3D682A50FFB866 /* ShareSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareSheet.swift; sourceTree = "<group>"; };
 		25134A1D7529B9A33AE76DF4 /* LapDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LapDetailView.swift; sourceTree = "<group>"; };
+		AABC013ECCA795D3BB7B56EC /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Theme.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -107,6 +109,7 @@
 				24CAC9AE58283E5C6C6D83FF /* VideoAnalyzer.swift */,
 				5DBB00629726EE9753DCD34F /* ResultView.swift */,
 				25134A1D7529B9A33AE76DF4 /* LapDetailView.swift */,
+				AABC013ECCA795D3BB7B56EC /* Theme.swift */,
 				E7C4DFD6588FB25D22A52932 /* VideoExporter.swift */,
 				7025BCB82FE71D4E47176E8B /* PhotoLibrarySaver.swift */,
 				6CAF32598C3D682A50FFB866 /* ShareSheet.swift */,
@@ -232,6 +235,7 @@
 				77675DD56BABA435997E4D96 /* VideoAnalyzer.swift in Sources */,
 				224258151BF9D4D93B47DC24 /* ResultView.swift in Sources */,
 				B7D7B4BEE9AC9E56BF16C599 /* LapDetailView.swift in Sources */,
+				3398E8DE22B203A26D6FE7DC /* Theme.swift in Sources */,
 				226BEFF4FE61715780289D07 /* VideoExporter.swift in Sources */,
 				BB0EBA2C3A6084DB35D6347E /* PhotoLibrarySaver.swift in Sources */,
 				0A4B1A7283D77270705E6F85 /* ShareSheet.swift in Sources */,

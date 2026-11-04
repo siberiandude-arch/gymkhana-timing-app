@@ -17,39 +17,51 @@ struct LapDetailView: View {
     var body: some View {
         VStack(spacing: 16) {
             if lap.finish == nil {
+                Image(systemName: "xmark.circle")
+                    .font(.system(size: 36))
+                    .foregroundColor(AppTheme.textSecondary)
                 Text("Заезд не завершён — финиш не зафиксирован (возврат мимо створа?)")
-                    .foregroundColor(.secondary)
+                    .foregroundColor(AppTheme.textSecondary)
                     .multilineTextAlignment(.center)
                     .padding()
             } else if let exportedURL, let player {
+                if let duration = lap.duration {
+                    Text(String(format: "%.3f с", duration))
+                        .font(.appTimer(36))
+                        .foregroundColor(AppTheme.accent)
+                }
                 VideoPlayer(player: player)
                     .aspectRatio(16.0 / 9.0, contentMode: .fit)
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
 
                 HStack(spacing: 12) {
                     Button("Сохранить в Фото") {
                         Task { await saveToPhotos(exportedURL) }
                     }
-                    .buttonStyle(.bordered)
+                    .buttonStyle(SecondaryButtonStyle())
 
                     Button("Поделиться") { isSharing = true }
-                        .buttonStyle(.bordered)
+                        .buttonStyle(SecondaryButtonStyle())
                 }
                 .sheet(isPresented: $isSharing) {
                     ShareSheet(items: [exportedURL])
                 }
             } else if isExporting {
                 ProgressView("Готовлю видео заезда...")
+                    .tint(AppTheme.accent)
+                    .foregroundColor(.white)
             }
 
             if let exportError {
                 Text(exportError).foregroundColor(.red).font(.footnote)
             }
             if let saveMessage {
-                Text(saveMessage).foregroundColor(.secondary).font(.footnote)
+                Text(saveMessage).foregroundColor(AppTheme.textSecondary).font(.footnote)
             }
         }
         .padding()
         .navigationTitle("Заезд \(lap.index)")
+        .appBackground()
         .task { await exportIfNeeded() }
     }
 

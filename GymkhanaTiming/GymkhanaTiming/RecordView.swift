@@ -2,6 +2,7 @@ import SwiftUI
 
 struct RecordView: View {
     @StateObject private var camera = CameraController()
+    let onBack: () -> Void
     let onFinished: (URL) -> Void
 
     var body: some View {
@@ -10,7 +11,30 @@ struct RecordView: View {
                 .ignoresSafeArea()
 
             VStack {
+                HStack {
+                    // Скрыта во время записи — выход посреди заезда потерял бы
+                    // отснятое видео, а camera.stopRecording() асинхронно
+                    // долетает до onFinished уже после ухода с этого экрана.
+                    if !camera.isRecording {
+                        Button(action: onBack) {
+                            Image(systemName: "chevron.left")
+                        }
+                        .buttonStyle(RoundIconButtonStyle())
+                        .padding([.top, .leading])
+                    }
+                    Spacer()
+                }
                 Spacer()
+                if camera.isRecording {
+                    Label("ЗАПИСЬ", systemImage: "circle.fill")
+                        .font(.appHeadline(14))
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(Color.red)
+                        .clipShape(Capsule())
+                        .padding(.bottom, 12)
+                }
                 if let error = camera.errorMessage {
                     Text(error)
                         .foregroundColor(.white)

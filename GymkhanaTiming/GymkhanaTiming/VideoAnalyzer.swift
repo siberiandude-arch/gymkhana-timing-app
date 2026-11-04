@@ -53,6 +53,21 @@ private struct Crossing {
     let fromPositiveSide: Bool
 }
 
+/// То же пересечение, что и Crossing, но с направлением, переведённым в
+/// понятный человеку смысл ("выезд"/"возврат") — для отладочного экрана:
+/// без него разобраться, почему заезды не состыковались, можно только по
+/// сырым логам из Xcode, а не на самом телефоне.
+struct CrossingDebugInfo: Identifiable {
+    let id = UUID()
+    let time: Double
+    let isExit: Bool
+}
+
+struct AnalysisOutput {
+    let laps: [LapAttempt]
+    let crossings: [CrossingDebugInfo]
+}
+
 enum AnalyzerError: Error {
     case noVideoTrack
     case noStartFinishFound
@@ -72,7 +87,7 @@ enum VideoAnalyzer {
 
     // MARK: - Публичная точка входа
 
-    static func analyze(videoURL: URL, p1: CGPoint, p2: CGPoint) async throws -> [LapAttempt] {
+    static func analyze(videoURL: URL, p1: CGPoint, p2: CGPoint) async throws -> AnalysisOutput {
         let asset = AVURLAsset(url: videoURL)
         guard let videoTrack = try await asset.loadTracks(withMediaType: .video).first else {
             throw AnalyzerError.noVideoTrack
@@ -115,11 +130,14 @@ enum VideoAnalyzer {
         print("[VideoAnalyzer] \(videoURL.lastPathComponent): trackMotorcycle done, \(records.count) detections")
         let crossings = analyzeCrossings(records: records, p1: p1, p2: p2, areaThresh: 8000 * scale * scale)
 
-        let laps = pairLaps(crossings: crossings)
+        let (laps, startDirection) = pairLaps(crossings: crossings)
         guard !laps.isEmpty else {
             throw AnalyzerError.noStartFinishFound
         }
-        return laps
+        let debugCrossings = crossings.map {
+            CrossingDebugInfo(time: $0.time, isExit: $0.fromPositiveSide == startDirection)
+        }
+        return AnalysisOutput(laps: laps, crossings: debugCrossings)
     }
 
     /// Ближайшее нечётное число (округление вниз, если между двумя нечётными) —
@@ -541,8 +559,8 @@ enum VideoAnalyzer {
     /// как окончательно уехать, и то самое первое пересечение в видео может
     /// оказаться предварительным покачиванием НЕ в ту сторону (проверено на
     /// реальных тестовых видео: 2 из 4 начинаются именно так).
-    private static func pairLaps(crossings: [Crossing], minLapDuration: Double = 2.0) -> [LapAttempt] {
-        guard !crossings.isEmpty else { return [] }
+    private static func pairLaps(crossings: [Crossing], minLapDuration: Double = 2.0) -> (laps: [LapAttempt], startDirection: Bool) {
+        guard !crossings.isEmpty else { return ([], true) }
         var burstEnd = 0
         while burstEnd + 1 < crossings.count, crossings[burstEnd + 1].time - crossings[burstEnd].time < minLapDuration {
             burstEnd += 1
@@ -567,6 +585,6 @@ enum VideoAnalyzer {
         if let unfinished = pendingStart {
             laps.append(LapAttempt(index: laps.count + 1, start: unfinished, finish: nil))
         }
-        return laps
+        return (laps, startDirection)
     }
 }
