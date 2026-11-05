@@ -100,6 +100,11 @@ struct LapAttempt: Identifiable {
 
     func duration(for rule: TimingRule) -> Double? { with(rule: rule).duration }
 
+    func with(index: Int) -> LapAttempt {
+        LapAttempt(id: id, index: index, rule: rule, startFront: startFront, startNear: startNear,
+                   finishFront: finishFront, finishRear: finishRear, finishNear: finishNear)
+    }
+
     func with(rule: TimingRule) -> LapAttempt {
         LapAttempt(id: id, index: index, rule: rule, startFront: startFront, startNear: startNear,
                    finishFront: finishFront, finishRear: finishRear, finishNear: finishNear)

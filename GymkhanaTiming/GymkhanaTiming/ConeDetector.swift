@@ -1,4 +1,5 @@
 import CoreGraphics
+import Foundation
 
 /// Находит основания двух конусов (там, где они касаются асфальта) в
 /// области кадра, обведённой пользователем от руки (замкнутый контур) — по цвету: конусы ярко-
@@ -79,24 +80,84 @@ enum ConeDetector {
             }
         }
 
-        let minArea = max(20, (w * h) / 400)
-        let components = findComponents(mask: mask, width: w, height: h, minArea: minArea)
-        guard components.count >= 2 else {
-            throw DetectionError.notEnoughCones(found: components.count)
+        // Конус часто разрезан светоотражающей полоской или бликом на
+        // несколько кусков — склеиваем близкие куски расширением маски,
+        // но сами пиксели конуса (и его основание) берём из исходной.
+        let radius = max(2, image.width / 400)
+        let dilated = dilate(mask: mask, width: w, height: h, radius: radius)
+
+        let minArea = max(12, Int((60.0 * pow(Double(image.width) / 1920.0, 2)).rounded()))
+        let rawComponents = findComponents(mask: dilated, width: w, height: h, minArea: 1)
+        var cones: [Cone] = []
+        for comp in rawComponents {
+            let own = comp.filter { mask[$0.1 * w + $0.0] }
+            guard own.count >= minArea else { continue }
+            let xs = own.map { $0.0 }, ys = own.map { $0.1 }
+            let bw = (xs.max() ?? 0) - (xs.min() ?? 0) + 1
+            let bh = (ys.max() ?? 0) - (ys.min() ?? 0) + 1
+            // конус — выше, чем шире; широкие пятна — это не конус
+            // (одежда, наклейки)
+            guard Double(bh) >= Double(bw) * 0.8 else { continue }
+            cones.append(Cone(area: own.count, width: bw, height: bh, base: baseCenter(of: own)))
         }
-        let top2 = components.sorted { $0.count > $1.count }.prefix(2)
-        let baseCenters = top2.map { baseCenter(of: $0) }
-        let ordered = baseCenters.sorted { $0.x < $1.x }
+        guard cones.count >= 2 else { throw DetectionError.notEnoughCones(found: cones.count) }
+
+        // Лучшая пара: два крупных конуса похожего размера, стоящие рядом
+        // по высоте кадра и не слипшиеся друг с другом.
+        var best: (score: Double, a: Cone, b: Cone)?
+        let top = cones.sorted { $0.area > $1.area }.prefix(8)
+        let list = Array(top)
+        for i in 0..<list.count {
+            for j in (i + 1)..<list.count {
+                let c1 = list[i], c2 = list[j]
+                let maxH = Double(max(c1.height, c2.height))
+                let minH = Double(min(c1.height, c2.height))
+                let dx = abs(Double(c1.base.x - c2.base.x))
+                let dy = abs(Double(c1.base.y - c2.base.y))
+                guard dx >= Double(max(c1.width, c2.width)) * 1.5, dy <= maxH * 2 else { continue }
+                let score = Double(min(c1.area, c2.area)) * (minH / maxH)
+                if best == nil || score > best!.score { best = (score, c1, c2) }
+            }
+        }
+        guard let pair = best else { throw DetectionError.notEnoughCones(found: cones.count) }
+
+        let ordered = [pair.a.base, pair.b.base].sorted { $0.x < $1.x }
         let left = CGPoint(x: ordered[0].x + CGFloat(x0), y: ordered[0].y + CGFloat(y0))
         let right = CGPoint(x: ordered[1].x + CGFloat(x0), y: ordered[1].y + CGFloat(y0))
         return (left, right)
     }
 
-    /// Эмпирический порог для ярко-оранжевого пластика конуса на асфальте/
-    /// траве/небе — не точная цветовая модель, но достаточно для контраста
-    /// с типичным фоном площадки.
+    private struct Cone {
+        let area: Int
+        let width: Int
+        let height: Int
+        let base: CGPoint
+    }
+
+    /// Оранжевый пластик конуса: оттенок 10–44°, насыщенный и не тёмный.
+    /// Проверено на реальных кадрах — в отличие от прежнего порога по RGB
+    /// ловит и конус в полутени, а красную одежду (оттенок <10°) отсекает.
+    /// (r — максимальный канал, поэтому оттенок выражается через (g−b)/(r−b).)
     private static func isConeOrange(r: Int, g: Int, b: Int) -> Bool {
-        r > 140 && r > g + 35 && g > b + 5 && b < 110
+        guard r >= 80, r >= g, g >= b else { return false }
+        let delta = r - b
+        guard delta * 255 >= r * 120 else { return false }  // насыщенность ≥ 0.47
+        let gb = g - b
+        return gb * 6 >= delta && gb * 4 <= delta * 3        // ≈ 0.167…0.75 → 10°…45°
+    }
+
+    private static func dilate(mask: [Bool], width: Int, height: Int, radius: Int) -> [Bool] {
+        var out = [Bool](repeating: false, count: width * height)
+        for y in 0..<height {
+            for x in 0..<width where mask[y * width + x] {
+                let ya = max(0, y - radius), yb = min(height - 1, y + radius)
+                let xa = max(0, x - radius), xb = min(width - 1, x + radius)
+                for yy in ya...yb {
+                    for xx in xa...xb { out[yy * width + xx] = true }
+                }
+            }
+        }
+        return out
     }
 
     private static func findComponents(mask: [Bool], width: Int, height: Int, minArea: Int) -> [[(Int, Int)]] {

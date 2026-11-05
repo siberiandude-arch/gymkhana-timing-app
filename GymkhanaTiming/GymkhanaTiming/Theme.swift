@@ -82,3 +82,20 @@ struct RoundIconButtonStyle: ButtonStyle {
             .opacity(configuration.isPressed ? 0.6 : 1)
     }
 }
+
+/// Компактная кнопка с рамкой — для вторичных действий рядом с видео.
+struct CompactButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.appHeadline(14))
+            .foregroundColor(.white)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 8)
+            .padding(.horizontal, 10)
+            .background(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .strokeBorder(AppTheme.accent.opacity(0.7), lineWidth: 1.2)
+            )
+            .opacity(configuration.isPressed ? 0.6 : 1)
+    }
+}

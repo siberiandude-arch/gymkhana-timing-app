@@ -34,17 +34,21 @@ enum VideoExporter {
         let naturalSize = try await videoTrack.load(.naturalSize)
         let lineWidth = max(2, naturalSize.width / 250)
 
+        // Линия одинакова на всех кадрах — рисуем её один раз. На каждом
+        // кадре перерисовывается только маленькая плашка с таймером: раньше
+        // каждый кадр получал заново отрисованный слой во весь размер
+        // (1920x1080), и экспорт шёл примерно в реальном времени.
+        let lineLayer = Self.lineOverlay(size: naturalSize, p1: p1, p2: p2, lineWidth: lineWidth)
+        let lapStart = lap.start
+
         let videoComposition = AVMutableVideoComposition(asset: asset) { request in
-            let overlay = Self.overlayImage(
-                size: request.renderSize,
-                time: request.compositionTime.seconds,
-                lapStart: lap.start,
-                lapFinish: finish,
-                p1: p1,
-                p2: p2,
-                lineWidth: lineWidth
-            )
-            request.finish(with: overlay.composited(over: request.sourceImage), context: nil)
+            let size = request.renderSize
+            let elapsed = max(0, min(request.compositionTime.seconds, finish) - lapStart)
+            var result = lineLayer.composited(over: request.sourceImage)
+            if let timer = Self.timerOverlay(text: String(format: "%.2f", elapsed), frameSize: size) {
+                result = timer.composited(over: result)
+            }
+            request.finish(with: result, context: nil)
         }
 
         guard let exportSession = AVAssetExportSession(asset: asset, presetName: AVAssetExportPresetHighestQuality) else {
@@ -79,10 +83,9 @@ enum VideoExporter {
 
     /// Рисуется с явным scale=1 — иначе UIGraphicsImageRenderer по умолчанию
     /// возьмёт scale экрана (2x/3x), и полученная CIImage будет в 2-3 раза
-    /// крупнее кадра видео (request.renderSize — это пиксели кадра, не points),
-    /// линия и таймер лягут не на то место или не в том масштабе.
-    private static func overlayImage(size: CGSize, time: Double, lapStart: Double, lapFinish: Double,
-                                      p1: CGPoint, p2: CGPoint, lineWidth: CGFloat) -> CIImage {
+    /// крупнее кадра видео (размер кадра — в пикселях, не points), линия
+    /// ляжет не на то место или не в том масштабе.
+    private static func lineOverlay(size: CGSize, p1: CGPoint, p2: CGPoint, lineWidth: CGFloat) -> CIImage {
         let format = UIGraphicsImageRendererFormat()
         format.scale = 1
         format.opaque = false
@@ -94,20 +97,32 @@ enum VideoExporter {
             cg.move(to: p1)
             cg.addLine(to: p2)
             cg.strokePath()
-
-            let elapsed = max(0, min(time, lapFinish) - lapStart)
-            let text = String(format: "%.2f", elapsed)
-            let font = UIFont.monospacedDigitSystemFont(ofSize: size.height / 14, weight: .bold)
-            let attrs: [NSAttributedString.Key: Any] = [
-                .font: font,
-                .foregroundColor: UIColor.white,
-                .strokeColor: UIColor.black,
-                .strokeWidth: -4
-            ]
-            let string = NSAttributedString(string: text, attributes: attrs)
-            let textSize = string.size()
-            string.draw(at: CGPoint(x: size.width - textSize.width - 24, y: 24))
         }
         return CIImage(image: image) ?? CIImage.empty()
+    }
+
+    /// Маленькая картинка с таймером в правом верхнем углу кадра.
+    private static func timerOverlay(text: String, frameSize: CGSize) -> CIImage? {
+        let font = UIFont.monospacedDigitSystemFont(ofSize: frameSize.height / 14, weight: .bold)
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: font,
+            .foregroundColor: UIColor.white,
+            .strokeColor: UIColor.black,
+            .strokeWidth: -4
+        ]
+        let string = NSAttributedString(string: text, attributes: attrs)
+        let textSize = string.size()
+        let imageSize = CGSize(width: ceil(textSize.width) + 8, height: ceil(textSize.height) + 8)
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        format.opaque = false
+        let image = UIGraphicsImageRenderer(size: imageSize, format: format).image { _ in
+            string.draw(at: CGPoint(x: 4, y: 4))
+        }
+        guard let ci = CIImage(image: image) else { return nil }
+        // у CIImage начало координат внизу слева, а таймер нужен сверху справа
+        let x = frameSize.width - imageSize.width - 20
+        let y = frameSize.height - imageSize.height - 20
+        return ci.transformed(by: CGAffineTransform(translationX: x, y: y))
     }
 }

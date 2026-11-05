@@ -26,7 +26,112 @@ struct CalibrationView: View {
     @State private var zoomScale: CGFloat = 1
 
     var body: some View {
-        VStack(spacing: 6) {
+        GeometryReader { root in
+            if root.size.width > root.size.height {
+                // Альбомная: кадр на всю высоту слева, управление справа —
+                // так картинка получается максимально крупной.
+                HStack(alignment: .top, spacing: 12) {
+                    frameArea
+                    controls
+                        .frame(width: min(230, root.size.width * 0.3))
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 6)
+            } else {
+                VStack(spacing: 8) {
+                    frameArea
+                    controls
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 6)
+            }
+        }
+        .appBackground()
+        .task {
+            await loadDuration()
+            await loadFrame(at: frameTime)
+        }
+    }
+
+    private var frameArea: some View {
+        GeometryReader { geo in
+            ZStack {
+                if let frameImage {
+                    ZStack {
+                        Image(uiImage: frameImage)
+                            .resizable()
+                            .scaledToFit()
+                            .frame(width: geo.size.width, height: geo.size.height)
+
+                        ForEach(Array(markerPositions(containerSize: geo.size).enumerated()), id: \.offset) { _, pos in
+                            Circle()
+                                .fill(Color.red)
+                                .frame(width: 12, height: 12)
+                                .position(pos)
+                                .allowsHitTesting(false)
+                        }
+
+                        if markerPositions(containerSize: geo.size).count == 2 {
+                            let pts = markerPositions(containerSize: geo.size)
+                            Path { path in
+                                path.move(to: pts[0])
+                                path.addLine(to: pts[1])
+                            }
+                            .stroke(Color.red, lineWidth: 2)
+                            .allowsHitTesting(false)
+                        }
+
+                        if lasso.count > 1 {
+                            Path { path in
+                                path.move(to: lasso[0])
+                                for pt in lasso.dropFirst() { path.addLine(to: pt) }
+                            }
+                            .stroke(AppTheme.accent, style: StrokeStyle(lineWidth: 3, lineCap: .round, lineJoin: .round))
+                            .allowsHitTesting(false)
+
+                            // Пунктир замыкания: куда контур сам дотянется
+                            Path { path in
+                                path.move(to: lasso[lasso.count - 1])
+                                path.addLine(to: lasso[0])
+                            }
+                            .stroke(AppTheme.accent.opacity(0.6), style: StrokeStyle(lineWidth: 2, dash: [6, 6]))
+                            .allowsHitTesting(false)
+                        }
+                    }
+                    .contentShape(Rectangle())
+                    .gesture(
+                        DragGesture(minimumDistance: 0)
+                            .onChanged { value in handleDrag(value, containerSize: geo.size, ended: false) }
+                            .onEnded { value in handleDrag(value, containerSize: geo.size, ended: true) }
+                    )
+                    .scaleEffect(zoomScale, anchor: .center)
+                    .simultaneousGesture(
+                        MagnificationGesture()
+                            .onChanged { value in
+                                isPinching = true
+                                lasso.removeAll()
+                                zoomScale = min(4, max(1, value))
+                            }
+                            .onEnded { _ in isPinching = false }
+                    )
+                } else {
+                    ProgressView()
+                        .frame(width: geo.size.width, height: geo.size.height)
+                }
+
+                if isLoadingFrame || isDetecting {
+                    Color.black.opacity(0.3)
+                        .allowsHitTesting(false)
+                    ProgressView(isDetecting ? "Ищу конусы..." : "")
+                        .tint(AppTheme.accent)
+                        .foregroundColor(.white)
+                }
+            }
+        }
+    }
+
+    private var controls: some View {
+        VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Button(action: onBack) {
                     Image(systemName: "chevron.left")
@@ -40,88 +145,13 @@ struct CalibrationView: View {
                         .buttonStyle(.bordered)
                 }
             }
-            .padding(.horizontal, 8)
-            .padding(.top, 4)
 
             Text(modeHint)
                 .font(.caption)
                 .foregroundColor(.white)
-                .multilineTextAlignment(.center)
-                .padding(.horizontal)
-                .lineLimit(2)
-
-            GeometryReader { geo in
-                ZStack {
-                    if let frameImage {
-                        ZStack {
-                            Image(uiImage: frameImage)
-                                .resizable()
-                                .scaledToFit()
-                                .frame(width: geo.size.width, height: geo.size.height)
-                                .gesture(
-                                    DragGesture(minimumDistance: 0)
-                                        .onChanged { value in handleDrag(value, containerSize: geo.size, ended: false) }
-                                        .onEnded { value in handleDrag(value, containerSize: geo.size, ended: true) }
-                                )
-
-                            ForEach(Array(markerPositions(containerSize: geo.size).enumerated()), id: \.offset) { _, pos in
-                                Circle()
-                                    .fill(Color.red)
-                                    .frame(width: 12, height: 12)
-                                    .position(pos)
-                            }
-
-                            if markerPositions(containerSize: geo.size).count == 2 {
-                                let pts = markerPositions(containerSize: geo.size)
-                                Path { path in
-                                    path.move(to: pts[0])
-                                    path.addLine(to: pts[1])
-                                }
-                                .stroke(Color.red, lineWidth: 2)
-                            }
-
-                            if lasso.count > 1 {
-                                Path { path in
-                                    path.move(to: lasso[0])
-                                    for pt in lasso.dropFirst() { path.addLine(to: pt) }
-                                }
-                                .stroke(AppTheme.accent, style: StrokeStyle(lineWidth: 3, lineCap: .round, lineJoin: .round))
-
-                                // Пунктир замыкания: куда контур сам дотянется
-                                Path { path in
-                                    path.move(to: lasso[lasso.count - 1])
-                                    path.addLine(to: lasso[0])
-                                }
-                                .stroke(AppTheme.accent.opacity(0.6), style: StrokeStyle(lineWidth: 2, dash: [6, 6]))
-                            }
-                        }
-                        .scaleEffect(zoomScale, anchor: .center)
-                        .simultaneousGesture(
-                            MagnificationGesture()
-                                .onChanged { value in
-                                    isPinching = true
-                                    lasso.removeAll()
-                                    zoomScale = min(4, max(1, value))
-                                }
-                                .onEnded { _ in isPinching = false }
-                        )
-                    } else {
-                        ProgressView()
-                            .frame(width: geo.size.width, height: geo.size.height)
-                    }
-
-                    if isLoadingFrame || isDetecting {
-                        Color.black.opacity(0.3)
-                        ProgressView(isDetecting ? "Ищу конусы..." : "")
-                            .tint(AppTheme.accent)
-                            .foregroundColor(.white)
-                    }
-                }
-            }
-            .padding(.horizontal)
 
             if videoDuration > 0 {
-                VStack(spacing: 2) {
+                VStack(alignment: .leading, spacing: 2) {
                     Slider(
                         value: Binding(get: { frameTime }, set: { frameTime = $0 }),
                         in: 0...videoDuration,
@@ -130,39 +160,29 @@ struct CalibrationView: View {
                         }
                     )
                     .tint(AppTheme.accent)
-                    Text(String(format: "Кадр на %.1fс из %.1fс — подвиньте, если конусы не видно", frameTime, videoDuration))
+                    Text(String(format: "Кадр %.1f из %.1f с. Если конусов не видно — подвиньте", frameTime, videoDuration))
                         .font(.caption2)
                         .foregroundColor(AppTheme.textSecondary)
                 }
-                .padding(.horizontal)
             }
 
             if let errorMessage {
-                Text(errorMessage).foregroundColor(.red).font(.footnote).padding(.horizontal)
+                Text(errorMessage).foregroundColor(.red).font(.footnote)
             }
 
-            HStack(spacing: 10) {
-                Button("Обвести заново") { points.removeAll(); lasso.removeAll(); errorMessage = nil }
-                    .foregroundColor(.white)
-                    .disabled(points.isEmpty && lasso.isEmpty)
-                Spacer()
-            }
-            .padding(.horizontal)
+            Spacer(minLength: 0)
+
+            Button("Обвести заново") { points.removeAll(); lasso.removeAll(); errorMessage = nil }
+                .buttonStyle(CompactButtonStyle())
+                .disabled(points.isEmpty && lasso.isEmpty)
 
             Button {
                 if points.count == 2 { onCalibrated(points[0], points[1]) }
             } label: {
-                Text(points.count == 2 ? "Далее" : "Обведите два стартовых конуса")
+                Text(points.count == 2 ? "Далее" : "Обведите конусы")
             }
             .disabled(points.count != 2)
             .buttonStyle(PrimaryButtonStyle(tint: points.count == 2 ? AppTheme.accent : AppTheme.surface))
-            .padding(.horizontal)
-            .padding(.bottom, 6)
-        }
-        .appBackground()
-        .task {
-            await loadDuration()
-            await loadFrame(at: frameTime)
         }
     }
 
