@@ -26,91 +26,7 @@ struct ContentView: View {
     var body: some View {
         switch stage {
         case .start:
-            VStack(spacing: 0) {
-                Spacer()
-
-                Image("HomeBanner")
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .frame(maxHeight: 220)
-                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-                    .padding(.horizontal, 24)
-
-                Spacer()
-
-                VStack(spacing: 14) {
-                    Button {
-                        stage = .record
-                    } label: {
-                        Label("Записать заезд", systemImage: "video.fill")
-                    }
-                    .buttonStyle(PrimaryButtonStyle())
-
-                    Button {
-                        showSourceChooser = true
-                    } label: {
-                        Label("Загрузить видео", systemImage: "square.and.arrow.up")
-                    }
-                    .buttonStyle(SecondaryButtonStyle())
-                    .disabled(isImportingMedia)
-                    .confirmationDialog("Откуда загрузить видео?", isPresented: $showSourceChooser, titleVisibility: .visible) {
-                        Button("Из файлов") { isPickingFile = true }
-                        Button("Из галереи") { isPickingFromPhotos = true }
-                    }
-
-                    if isImportingMedia {
-                        if let importProgress {
-                            ProgressView(value: importProgress) {
-                                Text("Загружаю видео... \(Int(importProgress * 100))%")
-                            }
-                            .tint(AppTheme.accent)
-                            .foregroundColor(AppTheme.textSecondary)
-                        } else {
-                            ProgressView("Загружаю видео...")
-                                .tint(AppTheme.accent)
-                                .foregroundColor(AppTheme.textSecondary)
-                            Text("Если видео хранится в iCloud, сначала оно скачается на телефон — это может занять время")
-                                .font(.caption2)
-                                .foregroundColor(AppTheme.textSecondary)
-                                .multilineTextAlignment(.center)
-                        }
-                    }
-
-                    if let importError {
-                        Text(importError).foregroundColor(.red).font(.footnote)
-                    }
-                }
-                .padding(.horizontal, 32)
-
-                Spacer()
-            }
-            .appBackground()
-            .fileImporter(isPresented: $isPickingFile, allowedContentTypes: [.movie]) { result in
-                switch result {
-                case .success(let url):
-                    importPickedVideo(url)
-                case .failure(let error):
-                    importError = error.localizedDescription
-                }
-            }
-            // Привязка через собственный Binding, а не через .onChange —
-            // двухпараметрический .onChange доступен только с iOS 17
-            // (у нас deployment target 16.0, был бы compile error), а
-            // старый однопараметрический помечен deprecated и ловится
-            // CI-проверкой "любой warning — это провал сборки".
-            .photosPicker(
-                isPresented: $isPickingFromPhotos,
-                selection: Binding(
-                    get: { photosPickerItem },
-                    set: { newItem in
-                        photosPickerItem = newItem
-                        if let newItem {
-                            Task { await importPickedVideo(fromPhotos: newItem) }
-                        }
-                    }
-                ),
-                matching: .videos
-            )
+            startScreen
 
         case .record:
             RecordView(onBack: { stage = .start }) { url in
@@ -162,6 +78,123 @@ struct ContentView: View {
             .padding()
             .appBackground()
         }
+    }
+
+    // MARK: - Главный экран
+
+    /// Горизонтально: картинка на весь экран, меню справа, как в игре
+    /// (справа в картинке специально оставлено свободное место). В
+    /// портрете такой кадр не влезает — картинка сверху, меню снизу.
+    private var startScreen: some View {
+        GeometryReader { geo in
+            if geo.size.width > geo.size.height {
+                ZStack(alignment: .trailing) {
+                    Image("HomeBanner")
+                        .resizable()
+                        .scaledToFill()
+                        // верх картинки (логотип) не должен обрезаться — при
+                        // более вытянутом экране срезаем нижний край
+                        .frame(width: geo.size.width + geo.safeAreaInsets.leading + geo.safeAreaInsets.trailing,
+                               height: geo.size.height + geo.safeAreaInsets.top + geo.safeAreaInsets.bottom,
+                               alignment: .top)
+                        .clipped()
+                        .overlay(
+                            LinearGradient(colors: [.clear, Color.black.opacity(0.5)],
+                                           startPoint: .center, endPoint: .trailing)
+                        )
+                        .ignoresSafeArea()
+
+                    menuPanel
+                        .frame(width: min(340, geo.size.width * 0.42))
+                        .padding(.trailing, 24)
+                }
+            } else {
+                VStack(spacing: 0) {
+                    Image("HomeBanner")
+                        .resizable()
+                        .scaledToFit()
+                        .frame(maxWidth: .infinity)
+                    Spacer()
+                    menuPanel.padding(.horizontal, 24)
+                    Spacer()
+                }
+                .appBackground()
+            }
+        }
+        .background(Color.black.ignoresSafeArea())
+        .fileImporter(isPresented: $isPickingFile, allowedContentTypes: [.movie]) { result in
+            switch result {
+            case .success(let url):
+                importPickedVideo(url)
+            case .failure(let error):
+                importError = error.localizedDescription
+            }
+        }
+        // Привязка через собственный Binding, а не через .onChange —
+        // двухпараметрический .onChange доступен только с iOS 17
+        // (у нас deployment target 16.0, был бы compile error), а
+        // старый однопараметрический помечен deprecated и ловится
+        // CI-проверкой "любой warning — это провал сборки".
+        .photosPicker(
+            isPresented: $isPickingFromPhotos,
+            selection: Binding(
+                get: { photosPickerItem },
+                set: { newItem in
+                    photosPickerItem = newItem
+                    if let newItem {
+                        Task { await importPickedVideo(fromPhotos: newItem) }
+                    }
+                }
+            ),
+            matching: .videos
+        )
+    }
+
+    private var menuPanel: some View {
+        VStack(spacing: 14) {
+            Button {
+                stage = .record
+            } label: {
+                Label("Записать заезд", systemImage: "video.fill")
+            }
+            .buttonStyle(PrimaryButtonStyle())
+
+            Button {
+                showSourceChooser = true
+            } label: {
+                Label("Загрузить видео", systemImage: "square.and.arrow.up")
+            }
+            .buttonStyle(SecondaryButtonStyle())
+            .disabled(isImportingMedia)
+            .confirmationDialog("Откуда загрузить видео?", isPresented: $showSourceChooser, titleVisibility: .visible) {
+                Button("Из файлов") { isPickingFile = true }
+                Button("Из галереи") { isPickingFromPhotos = true }
+            }
+
+            if isImportingMedia {
+                if let importProgress {
+                    ProgressView(value: importProgress) {
+                        Text("Загружаю видео... \(Int(importProgress * 100))%")
+                    }
+                    .tint(AppTheme.accent)
+                    .foregroundColor(AppTheme.textSecondary)
+                } else {
+                    ProgressView("Загружаю видео...")
+                        .tint(AppTheme.accent)
+                        .foregroundColor(AppTheme.textSecondary)
+                    Text("Если видео хранится в iCloud, сначала оно скачается на телефон — это может занять время")
+                        .font(.caption2)
+                        .foregroundColor(AppTheme.textSecondary)
+                        .multilineTextAlignment(.center)
+                }
+            }
+
+            if let importError {
+                Text(importError).foregroundColor(.red).font(.footnote)
+            }
+        }
+        .padding(18)
+        .background(Color.black.opacity(0.55), in: RoundedRectangle(cornerRadius: 22, style: .continuous))
     }
 
     private func runAnalysis(videoURL: URL, p1: CGPoint, p2: CGPoint) {

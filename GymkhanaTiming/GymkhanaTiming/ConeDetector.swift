@@ -1,7 +1,7 @@
 import CoreGraphics
 
 /// Находит основания двух конусов (там, где они касаются асфальта) в
-/// выделенной пользователем области кадра — по цвету: конусы ярко-
+/// области кадра, обведённой пользователем от руки (замкнутый контур) — по цвету: конусы ярко-
 /// оранжевые, асфальт/трава/небо — нет. Это помощник поверх ручной
 /// разметки, а не замена: если не нашёл — райдер просто ставит точки сам.
 ///
@@ -16,7 +16,14 @@ enum ConeDetector {
         case notEnoughCones(found: Int)
     }
 
-    static func findConeBases(in image: CGImage, region: CGRect) throws -> (left: CGPoint, right: CGPoint) {
+    /// `polygon` — контур обводки в пиксельных координатах кадра; он
+    /// считается замкнутым (последняя точка соединяется с первой).
+    static func findConeBases(in image: CGImage, polygon: [CGPoint]) throws -> (left: CGPoint, right: CGPoint) {
+        guard polygon.count >= 3 else { throw DetectionError.regionTooSmall }
+        let xs = polygon.map { $0.x }, ys = polygon.map { $0.y }
+        let region = CGRect(x: xs.min() ?? 0, y: ys.min() ?? 0,
+                            width: (xs.max() ?? 0) - (xs.min() ?? 0),
+                            height: (ys.max() ?? 0) - (ys.min() ?? 0))
         let x0 = max(0, Int(region.minX.rounded(.down)))
         let y0 = max(0, Int(region.minY.rounded(.down)))
         let x1 = min(image.width, Int(region.maxX.rounded(.up)))
@@ -27,6 +34,29 @@ enum ConeDetector {
         guard let cropped = image.cropping(to: CGRect(x: x0, y: y0, width: w, height: h)) else {
             throw DetectionError.bitmapCreationFailed
         }
+
+        // Маска внутренности контура: рисуем полигон белым в 8-битный
+        // градационный буфер (строка 0 — верх кадра, как и у пикселей ниже).
+        var inside = [UInt8](repeating: 0, count: w * h)
+        let gray = CGColorSpaceCreateDeviceGray()
+        let insideOK = inside.withUnsafeMutableBytes { raw -> Bool in
+            guard let maskCtx = CGContext(data: raw.baseAddress, width: w, height: h, bitsPerComponent: 8,
+                                          bytesPerRow: w, space: gray, bitmapInfo: CGImageAlphaInfo.none.rawValue) else {
+                return false
+            }
+            maskCtx.translateBy(x: 0, y: CGFloat(h))
+            maskCtx.scaleBy(x: 1, y: -1)
+            maskCtx.setFillColor(gray: 1, alpha: 1)
+            maskCtx.beginPath()
+            for (i, pt) in polygon.enumerated() {
+                let q = CGPoint(x: pt.x - CGFloat(x0), y: pt.y - CGFloat(y0))
+                if i == 0 { maskCtx.move(to: q) } else { maskCtx.addLine(to: q) }
+            }
+            maskCtx.closePath()
+            maskCtx.fillPath()
+            return true
+        }
+        guard insideOK else { throw DetectionError.bitmapCreationFailed }
 
         var pixels = [UInt8](repeating: 0, count: w * h * 4)
         let colorSpace = CGColorSpaceCreateDeviceRGB()
@@ -45,7 +75,7 @@ enum ConeDetector {
         pixels.withUnsafeBufferPointer { buf in
             for i in 0..<(w * h) {
                 let r = Int(buf[i * 4]), g = Int(buf[i * 4 + 1]), b = Int(buf[i * 4 + 2])
-                mask[i] = isConeOrange(r: r, g: g, b: b)
+                mask[i] = inside[i] > 127 && isConeOrange(r: r, g: g, b: b)
             }
         }
 

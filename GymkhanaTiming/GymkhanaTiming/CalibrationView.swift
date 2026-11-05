@@ -1,20 +1,15 @@
 import SwiftUI
 import AVFoundation
 
-/// Разметка линии старта-финиша: либо тапнуть две точки по разметке на
-/// асфальте вручную, либо обвести прямоугольником область со стартовыми
-/// конусами — тогда ConeDetector сам найдёт их основания по цвету.
-/// В обоих случаях итог — те же две точки `points`, использующиеся дальше
-/// одинаково.
+/// Разметка линии старта-финиша: пользователь одним движением пальца
+/// обводит два стартовых конуса (контур сам замыкается, если не доведён до
+/// начала) — ConeDetector находит основания конусов по цвету, и между ними
+/// проводится линия. Ручной постановки точек нет: попасть пальцем в
+/// основание конуса точно не получается, а детектор делает это стабильнее.
 struct CalibrationView: View {
     let videoURL: URL
     let onBack: () -> Void
     let onCalibrated: (CGPoint, CGPoint) -> Void
-
-    private enum Mode: String, CaseIterable {
-        case manual = "Тапнуть точки"
-        case autoDetect = "Обвести конусы"
-    }
 
     @State private var frameImage: UIImage?
     @State private var frameCGImage: CGImage?
@@ -24,12 +19,11 @@ struct CalibrationView: View {
     @State private var videoDuration: Double = 0
     @State private var frameTime: Double = 0
     @State private var isLoadingFrame = false
-    @State private var mode: Mode = .manual
-    @State private var selectionStart: CGPoint?
-    @State private var selectionEnd: CGPoint?
+    @State private var lasso: [CGPoint] = [] // в координатах контейнера
+    @State private var isPinching = false
+    @State private var isDrawing = false
     @State private var isDetecting = false
     @State private var zoomScale: CGFloat = 1
-    @State private var lastContainerSize: CGSize = .zero
 
     var body: some View {
         VStack(spacing: 6) {
@@ -39,12 +33,7 @@ struct CalibrationView: View {
                 }
                 .buttonStyle(RoundIconButtonStyle())
 
-                Picker("Режим", selection: $mode) {
-                    ForEach(Mode.allCases, id: \.self) { m in
-                        Text(m.rawValue).tag(m)
-                    }
-                }
-                .pickerStyle(.segmented)
+                Spacer()
 
                 if zoomScale != 1 {
                     Button("100%") { zoomScale = 1 }
@@ -91,20 +80,30 @@ struct CalibrationView: View {
                                 .stroke(Color.red, lineWidth: 2)
                             }
 
-                            if mode == .autoDetect, let a = selectionStart, let b = selectionEnd {
-                                let rect = CGRect(x: min(a.x, b.x), y: min(a.y, b.y),
-                                                   width: abs(a.x - b.x), height: abs(a.y - b.y))
-                                Rectangle()
-                                    .strokeBorder(AppTheme.accent, lineWidth: 2)
-                                    .background(Rectangle().fill(AppTheme.accent.opacity(0.15)))
-                                    .frame(width: rect.width, height: rect.height)
-                                    .position(x: rect.midX, y: rect.midY)
+                            if lasso.count > 1 {
+                                Path { path in
+                                    path.move(to: lasso[0])
+                                    for pt in lasso.dropFirst() { path.addLine(to: pt) }
+                                }
+                                .stroke(AppTheme.accent, style: StrokeStyle(lineWidth: 3, lineCap: .round, lineJoin: .round))
+
+                                // Пунктир замыкания: куда контур сам дотянется
+                                Path { path in
+                                    path.move(to: lasso[lasso.count - 1])
+                                    path.addLine(to: lasso[0])
+                                }
+                                .stroke(AppTheme.accent.opacity(0.6), style: StrokeStyle(lineWidth: 2, dash: [6, 6]))
                             }
                         }
                         .scaleEffect(zoomScale, anchor: .center)
                         .simultaneousGesture(
                             MagnificationGesture()
-                                .onChanged { value in zoomScale = min(4, max(1, value)) }
+                                .onChanged { value in
+                                    isPinching = true
+                                    lasso.removeAll()
+                                    zoomScale = min(4, max(1, value))
+                                }
+                                .onEnded { _ in isPinching = false }
                         )
                     } else {
                         ProgressView()
@@ -143,16 +142,9 @@ struct CalibrationView: View {
             }
 
             HStack(spacing: 10) {
-                Button("Сбросить") { points.removeAll(); selectionStart = nil; selectionEnd = nil }
+                Button("Обвести заново") { points.removeAll(); lasso.removeAll(); errorMessage = nil }
                     .foregroundColor(.white)
-                    .disabled(points.isEmpty && selectionStart == nil)
-
-                if mode == .autoDetect {
-                    Button("Найти конусы") { detectConesInSelection(containerSize: lastContainerSize) }
-                        .buttonStyle(.bordered)
-                        .disabled(selectionStart == nil || selectionEnd == nil || isDetecting)
-                }
-
+                    .disabled(points.isEmpty && lasso.isEmpty)
                 Spacer()
             }
             .padding(.horizontal)
@@ -160,7 +152,7 @@ struct CalibrationView: View {
             Button {
                 if points.count == 2 { onCalibrated(points[0], points[1]) }
             } label: {
-                Text(points.count == 2 ? "Далее" : "Отметьте 2 точки (\(points.count)/2)")
+                Text(points.count == 2 ? "Далее" : "Обведите два стартовых конуса")
             }
             .disabled(points.count != 2)
             .buttonStyle(PrimaryButtonStyle(tint: points.count == 2 ? AppTheme.accent : AppTheme.surface))
@@ -175,56 +167,54 @@ struct CalibrationView: View {
     }
 
     private var modeHint: String {
-        switch mode {
-        case .manual:
-            return "Тапните 2 точки у ОСНОВАНИЯ конусов (на асфальте), не по телу конуса"
-        case .autoDetect:
-            return "Проведите пальцем прямоугольник вокруг обоих стартовых конусов, потом «Найти конусы»"
-        }
+        "Обведите пальцем оба стартовых конуса — контур замкнётся сам. Линия пройдёт по основаниям конусов."
     }
 
     private func handleDrag(_ value: DragGesture.Value, containerSize: CGSize, ended: Bool) {
-        lastContainerSize = containerSize
-        switch mode {
-        case .manual:
-            guard ended else { return }
-            addPoint(at: value.location, containerSize: containerSize)
-        case .autoDetect:
-            if selectionStart == nil { selectionStart = value.startLocation }
-            selectionEnd = value.location
+        let wasDrawing = isDrawing
+        isDrawing = !ended
+        guard !isPinching, !isDetecting else { return }
+        if !wasDrawing {
+            lasso = [value.startLocation]
+            points.removeAll()
+            errorMessage = nil
+        }
+        if let last = lasso.last, hypot(last.x - value.location.x, last.y - value.location.y) >= 3 {
+            lasso.append(value.location)
+        }
+        if ended {
+            finishLasso(containerSize: containerSize)
         }
     }
 
-    private func addPoint(at location: CGPoint, containerSize: CGSize) {
-        guard points.count < 2, pixelSize != .zero else { return }
-        guard let pixelPoint = displayPointToPixel(location, containerSize: containerSize) else { return }
-        points.append(pixelPoint)
-    }
-
-    private func detectConesInSelection(containerSize: CGSize) {
-        guard let frameCGImage, let a = selectionStart, let b = selectionEnd else { return }
-        guard let p1 = displayPointToPixel(a, containerSize: containerSize),
-              let p2 = displayPointToPixel(b, containerSize: containerSize) else {
-            errorMessage = "Выделение вышло за пределы кадра — обведите конусы ещё раз"
+    private func finishLasso(containerSize: CGSize) {
+        guard lasso.count >= 8 else {
+            lasso.removeAll()
+            errorMessage = "Слишком короткая линия — обведите оба конуса одним движением"
+            return
+        }
+        guard let frameCGImage else { return }
+        let pixelPolygon = lasso.compactMap { displayPointToPixel($0, containerSize: containerSize, clamped: true) }
+        guard pixelPolygon.count >= 3 else {
+            lasso.removeAll()
+            errorMessage = "Обводка вышла за пределы кадра — попробуйте ещё раз"
             return
         }
         isDetecting = true
         errorMessage = nil
-        let region = CGRect(x: min(p1.x, p2.x), y: min(p1.y, p2.y),
-                             width: abs(p1.x - p2.x), height: abs(p1.y - p2.y))
         Task {
             defer { isDetecting = false }
             do {
-                let (left, right) = try ConeDetector.findConeBases(in: frameCGImage, region: region)
+                let (left, right) = try ConeDetector.findConeBases(in: frameCGImage, polygon: pixelPolygon)
                 await MainActor.run {
                     points = [left, right]
-                    selectionStart = nil
-                    selectionEnd = nil
+                    lasso.removeAll()
                     errorMessage = nil
                 }
             } catch {
                 await MainActor.run {
-                    errorMessage = "Не нашёл 2 конуса в выделении — попробуйте точнее обвести, или переключитесь на ручную разметку"
+                    lasso.removeAll()
+                    errorMessage = "Не нашёл 2 конуса внутри контура — обведите точнее (оба конуса должны быть целиком внутри) или выберите другой кадр ползунком"
                 }
             }
         }
@@ -241,9 +231,14 @@ struct CalibrationView: View {
         return CGRect(x: originX, y: originY, width: displayedWidth, height: displayedHeight)
     }
 
-    private func displayPointToPixel(_ point: CGPoint, containerSize: CGSize) -> CGPoint? {
+    private func displayPointToPixel(_ point: CGPoint, containerSize: CGSize, clamped: Bool = false) -> CGPoint? {
         let frame = displayPointToFrame(pixelSize, containerSize: containerSize)
-        guard frame.contains(point) else { return nil }
+        var point = point
+        if clamped {
+            point.x = min(max(point.x, frame.minX), frame.maxX)
+            point.y = min(max(point.y, frame.minY), frame.maxY)
+        }
+        guard clamped || frame.contains(point) else { return nil }
         let relX = (point.x - frame.origin.x) / frame.width
         let relY = (point.y - frame.origin.y) / frame.height
         return CGPoint(x: relX * pixelSize.width, y: relY * pixelSize.height)
@@ -283,6 +278,7 @@ struct CalibrationView: View {
             frameCGImage = cgImage
             pixelSize = CGSize(width: cgImage.width, height: cgImage.height)
             errorMessage = nil
+            lasso.removeAll()
         } catch {
             errorMessage = "Не удалось получить кадр: \(error.localizedDescription)"
         }
