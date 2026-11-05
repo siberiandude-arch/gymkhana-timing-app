@@ -1,5 +1,5 @@
 import AVFoundation
-import CoreImage
+@preconcurrency import CoreImage
 import UIKit
 
 /// Нарезает видео заезда (старт→финиш, с небольшим запасом по краям) и
