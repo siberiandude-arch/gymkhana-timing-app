@@ -17,6 +17,7 @@ struct ContentView: View {
     @State private var isPickingFile = false
     @State private var isPickingFromPhotos = false
     @State private var isImportingMedia = false
+    @State private var importProgress: Double?
     @State private var importError: String?
     @State private var photosPickerItem: PhotosPickerItem?
     @State private var showSourceChooser = false
@@ -28,18 +29,12 @@ struct ContentView: View {
             VStack(spacing: 0) {
                 Spacer()
 
-                VStack(spacing: 4) {
-                    Image(systemName: "stopwatch.fill")
-                        .font(.system(size: 50))
-                        .foregroundColor(AppTheme.accent)
-                        .padding(.bottom, 8)
-                    Text("GYMKHANA")
-                        .font(.appTitle(30))
-                        .foregroundColor(.white)
-                    Text("TIMING")
-                        .font(.appTitle(30))
-                        .foregroundColor(AppTheme.accent)
-                }
+                Image("HomeBanner")
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(maxHeight: 220)
+                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    .padding(.horizontal, 24)
 
                 Spacer()
 
@@ -64,9 +59,21 @@ struct ContentView: View {
                     }
 
                     if isImportingMedia {
-                        ProgressView("Загружаю видео...")
+                        if let importProgress {
+                            ProgressView(value: importProgress) {
+                                Text("Загружаю видео... \(Int(importProgress * 100))%")
+                            }
                             .tint(AppTheme.accent)
                             .foregroundColor(AppTheme.textSecondary)
+                        } else {
+                            ProgressView("Загружаю видео...")
+                                .tint(AppTheme.accent)
+                                .foregroundColor(AppTheme.textSecondary)
+                            Text("Если видео хранится в iCloud, сначала оно скачается на телефон — это может занять время")
+                                .font(.caption2)
+                                .foregroundColor(AppTheme.textSecondary)
+                                .multilineTextAlignment(.center)
+                        }
                     }
 
                     if let importError {
@@ -174,6 +181,7 @@ struct ContentView: View {
     /// прогнать VideoAnalyzer на заранее записанных тестовых заездах.
     private func importPickedVideo(_ pickedURL: URL) {
         isImportingMedia = true
+        importProgress = 0
         Task {
             let didAccess = pickedURL.startAccessingSecurityScopedResource()
             defer { if didAccess { pickedURL.stopAccessingSecurityScopedResource() } }
@@ -181,18 +189,69 @@ struct ContentView: View {
             let localURL = FileManager.default.temporaryDirectory
                 .appendingPathComponent(UUID().uuidString)
                 .appendingPathExtension(pickedURL.pathExtension.isEmpty ? "mov" : pickedURL.pathExtension)
+            try? FileManager.default.removeItem(at: localURL)
             do {
-                try? FileManager.default.removeItem(at: localURL)
-                try FileManager.default.copyItem(at: pickedURL, to: localURL)
+                try copyWithProgress(from: pickedURL, to: localURL) { fraction in
+                    Task { @MainActor in importProgress = fraction }
+                }
                 await MainActor.run {
                     importError = nil
                     isImportingMedia = false
+                    importProgress = nil
                     stage = .calibrate(videoURL: localURL)
                 }
             } catch {
                 await MainActor.run {
                     importError = "Не удалось загрузить файл: \(error.localizedDescription)"
                     isImportingMedia = false
+                    importProgress = nil
+                }
+            }
+        }
+    }
+
+    /// Копирует файл чанками по 1МБ вместо FileManager.copyItem, чтобы
+    /// можно было сообщать реальный процент — пользователь жаловался, что
+    /// при загрузке "ничего не происходит" по несколько минут на больших
+    /// видео. Для PhotosPicker-варианта (галерея) такого контроля нет —
+    /// Transferable не отдаёт прогресс, так что там остаётся спиннер.
+    private func copyWithProgress(from source: URL, to destination: URL, onProgress: @escaping (Double) -> Void) throws {
+        let attributes = try? FileManager.default.attributesOfItem(atPath: source.path)
+        let totalSize = (attributes?[.size] as? NSNumber)?.int64Value ?? 0
+
+        guard let input = InputStream(url: source) else { throw CocoaError(.fileReadNoSuchFile) }
+        guard let output = OutputStream(url: destination, append: false) else { throw CocoaError(.fileWriteUnknown) }
+        input.open()
+        output.open()
+        defer { input.close(); output.close() }
+
+        let bufferSize = 1 * 1024 * 1024
+        var buffer = [UInt8](repeating: 0, count: bufferSize)
+        var totalWritten: Int64 = 0
+        var lastReportedFraction = -1.0
+
+        while input.hasBytesAvailable {
+            let bytesRead = buffer.withUnsafeMutableBytes { rawBuffer -> Int in
+                input.read(rawBuffer.bindMemory(to: UInt8.self).baseAddress!, maxLength: bufferSize)
+            }
+            if bytesRead < 0 { throw input.streamError ?? CocoaError(.fileReadUnknown) }
+            if bytesRead == 0 { break }
+
+            var offset = 0
+            while offset < bytesRead {
+                let written = buffer.withUnsafeBytes { rawBuffer -> Int in
+                    output.write(rawBuffer.bindMemory(to: UInt8.self).baseAddress! + offset, maxLength: bytesRead - offset)
+                }
+                if written <= 0 { throw output.streamError ?? CocoaError(.fileWriteUnknown) }
+                offset += written
+            }
+
+            totalWritten += Int64(bytesRead)
+            if totalSize > 0 {
+                let fraction = min(1, Double(totalWritten) / Double(totalSize))
+                if fraction - lastReportedFraction > 0.01 {
+                    lastReportedFraction = fraction
+                    onProgress(fraction)
                 }
             }
         }

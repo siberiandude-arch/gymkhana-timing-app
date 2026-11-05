@@ -24,6 +24,8 @@
 		0A4B1A7283D77270705E6F85 /* ShareSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6CAF32598C3D682A50FFB866 /* ShareSheet.swift */; };
 		B7D7B4BEE9AC9E56BF16C599 /* LapDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 25134A1D7529B9A33AE76DF4 /* LapDetailView.swift */; };
 		3398E8DE22B203A26D6FE7DC /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = AABC013ECCA795D3BB7B56EC /* Theme.swift */; };
+		2EF4B4282AFFD7EB5200D629 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 5CA35321C137A0B9C04449FD /* Assets.xcassets */; };
+		BFD477FE5754BCDFF26AF554 /* ConeDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = 05B8F8ACA321D6B7742BF0E2 /* ConeDetector.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -47,6 +49,8 @@
 		6CAF32598C3D682A50FFB866 /* ShareSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareSheet.swift; sourceTree = "<group>"; };
 		25134A1D7529B9A33AE76DF4 /* LapDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LapDetailView.swift; sourceTree = "<group>"; };
 		AABC013ECCA795D3BB7B56EC /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Theme.swift; sourceTree = "<group>"; };
+		5CA35321C137A0B9C04449FD /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		05B8F8ACA321D6B7742BF0E2 /* ConeDetector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConeDetector.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -113,6 +117,8 @@
 				E7C4DFD6588FB25D22A52932 /* VideoExporter.swift */,
 				7025BCB82FE71D4E47176E8B /* PhotoLibrarySaver.swift */,
 				6CAF32598C3D682A50FFB866 /* ShareSheet.swift */,
+				5CA35321C137A0B9C04449FD /* Assets.xcassets */,
+				05B8F8ACA321D6B7742BF0E2 /* ConeDetector.swift */,
 				E7246A8D306D1D8179347DEC /* Info.plist */,
 			);
 			path = GymkhanaTiming;
@@ -208,6 +214,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				2EF4B4282AFFD7EB5200D629 /* Assets.xcassets in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -236,6 +243,7 @@
 				224258151BF9D4D93B47DC24 /* ResultView.swift in Sources */,
 				B7D7B4BEE9AC9E56BF16C599 /* LapDetailView.swift in Sources */,
 				3398E8DE22B203A26D6FE7DC /* Theme.swift in Sources */,
+				BFD477FE5754BCDFF26AF554 /* ConeDetector.swift in Sources */,
 				226BEFF4FE61715780289D07 /* VideoExporter.swift in Sources */,
 				BB0EBA2C3A6084DB35D6347E /* PhotoLibrarySaver.swift in Sources */,
 				0A4B1A7283D77270705E6F85 /* ShareSheet.swift in Sources */,
@@ -388,6 +396,7 @@
 		4B624BE49B688E3162ABB0B7 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
@@ -413,6 +422,7 @@
 		6A67AE9FD367BBEC77F5732E /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
