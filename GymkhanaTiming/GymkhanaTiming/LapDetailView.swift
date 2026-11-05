@@ -13,6 +13,7 @@ struct LapDetailView: View {
     @State private var exportError: String?
     @State private var isSharing = false
     @State private var saveMessage: String?
+    @State private var isFullscreen = false
 
     var body: some View {
         VStack(spacing: 16) {
@@ -33,6 +34,18 @@ struct LapDetailView: View {
                 VideoPlayer(player: player)
                     .aspectRatio(16.0 / 9.0, contentMode: .fit)
                     .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .overlay(alignment: .topTrailing) {
+                        Button {
+                            isFullscreen = true
+                        } label: {
+                            Image(systemName: "arrow.up.left.and.arrow.down.right")
+                        }
+                        .buttonStyle(RoundIconButtonStyle())
+                        .padding(8)
+                    }
+                    .fullScreenCover(isPresented: $isFullscreen) {
+                        FullscreenPlayer(player: player) { isFullscreen = false }
+                    }
 
                 HStack(spacing: 12) {
                     Button("Сохранить в Фото") {
@@ -89,6 +102,24 @@ struct LapDetailView: View {
             await MainActor.run { saveMessage = "Сохранено в Фото" }
         } catch {
             await MainActor.run { saveMessage = "Не удалось сохранить: \(error)" }
+        }
+    }
+}
+
+private struct FullscreenPlayer: View {
+    let player: AVPlayer
+    let onClose: () -> Void
+
+    var body: some View {
+        ZStack(alignment: .topTrailing) {
+            Color.black.ignoresSafeArea()
+            VideoPlayer(player: player)
+                .ignoresSafeArea()
+            Button(action: onClose) {
+                Image(systemName: "xmark")
+            }
+            .buttonStyle(RoundIconButtonStyle())
+            .padding(16)
         }
     }
 }

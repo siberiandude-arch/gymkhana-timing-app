@@ -7,11 +7,24 @@ struct ResultView: View {
     let p2: CGPoint
     let onRestart: () -> Void
 
+    @State private var rule: TimingRule = .frontToRear
+
+    private var laps: [LapAttempt] { output.laps.map { $0.with(rule: rule) } }
+
     var body: some View {
         NavigationStack {
             List {
                 Section {
-                    ForEach(output.laps) { lap in
+                    Picker("Правило", selection: $rule) {
+                        ForEach(TimingRule.allCases) { r in
+                            Text(r.title).tag(r)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                }
+
+                Section {
+                    ForEach(laps) { lap in
                         NavigationLink {
                             LapDetailView(lap: lap, videoURL: videoURL, p1: p1, p2: p2)
                         } label: {
@@ -26,19 +39,27 @@ struct ResultView: View {
                 Section("Отладка: пересечения створа (\(output.crossings.count))") {
                     DisclosureGroup("Показать") {
                         ForEach(output.crossings) { crossing in
-                            HStack {
-                                Text(String(format: "%.3f с", crossing.time))
-                                    .font(.system(.footnote, design: .monospaced))
-                                Spacer()
-                                Text(crossing.isExit ? "выезд →" : "← возврат")
-                                    .font(.footnote)
-                                    .foregroundColor(crossing.isExit ? .orange : .blue)
+                            VStack(alignment: .leading, spacing: 2) {
+                                HStack {
+                                    Text(String(format: "%.3f с", crossing.time))
+                                        .font(.system(.footnote, design: .monospaced))
+                                    Spacer()
+                                    Text(crossing.isExit ? "выезд →" : "← возврат")
+                                        .font(.footnote)
+                                        .foregroundColor(crossing.isExit ? .orange : .blue)
+                                }
+                                Text(String(format: "перед %.3f · зад %.3f · Δ %.2f · у камеры: %@%@",
+                                            crossing.tFront, crossing.tRear, crossing.delta,
+                                            crossing.nearIsFront ? "перед" : "зад",
+                                            crossing.compensated ? "" : " (без поправки)"))
+                                    .font(.system(.caption2, design: .monospaced))
+                                    .foregroundColor(AppTheme.textSecondary)
                             }
                         }
                     }
                 }
             }
-            .navigationTitle("Заезды (\(output.laps.count))")
+            .navigationTitle("Заезды (\(laps.count))")
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button("Новая сессия", action: onRestart)

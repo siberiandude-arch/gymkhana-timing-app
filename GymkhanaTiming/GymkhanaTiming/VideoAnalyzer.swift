@@ -6,15 +6,13 @@ import CoreGraphics
 /// Это прямой перенос логики шаг-в-шаг: статичный участок видео, ROI
 /// вокруг створа, вычитание фона + морфология + связные компоненты,
 /// знаковое расстояние до линии, поиск пересечений с интерполяцией,
-/// эвристика выбора старта/финиша.
+/// группировка пересечений в заезды.
 ///
 /// Одно сознательное упрощение: вместо `cv2.createBackgroundSubtractorMOG2`
 /// (смесь гауссиан на пиксель) используется скользящее среднее по кадру —
 /// в чистом Swift/Accelerate нет готового MOG2. Параметры (alpha, порог)
 /// подобраны и провалидированы на тех же 4 тестовых видео, что и
-/// python-версия (см. README, раздел про валидацию) — расхождение с
-/// референсным временем табло в среднем ~0.3с, максимум ~0.42с, что
-/// сопоставимо с самой python-версией (~0.05–0.55с).
+/// python-версия (см. README, раздел про валидацию).
 
 extension CGAffineTransform {
     var isNearIdentity: Bool {
@@ -27,9 +25,33 @@ struct DetectionRecord {
     let t: Double
     let cx: Double
     let cy: Double
+    /// Площадь пятна в пикселях ПОЛНОГО разрешения (с учётом прореживания).
     let area: Int
     let leftBottom: CGPoint
     let rightBottom: CGPoint
+    /// Верхняя и нижняя точки силуэта (полное разрешение) — по ним
+    /// оценивается масштаб (рост байка с райдером в пикселях).
+    let top: Double
+    let bottom: Double
+}
+
+/// Как считать время круга. Камера видит только ближнее к ней колесо, а
+/// "как лазер" значит: ворота срабатывают на переднее колесо, а событие
+/// заканчивается, когда ворота прошло и заднее колесо.
+enum TimingRule: String, CaseIterable, Identifiable {
+    /// Старт — переднее колесо при выезде, финиш — заднее колесо при возврате.
+    case frontToRear
+    /// Классическая телеметрия: первое касание луча передним колесом и на старте, и на финише.
+    case frontToFront
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .frontToRear: return "Старт — переднее колесо, финиш — заднее"
+        case .frontToFront: return "Старт и финиш — переднее колесо"
+        }
+    }
 }
 
 /// Один проезд через створ: от выезда со старта до возврата в створ.
@@ -37,30 +59,81 @@ struct DetectionRecord {
 /// например, срезал на упражнении и заехал в стартовые ворота по внешнему
 /// контуру, не пересекая саму линию (см. pairLaps).
 struct LapAttempt: Identifiable {
-    let id = UUID()
+    let id: UUID
     let index: Int
-    let start: Double
-    let finish: Double?
+    let rule: TimingRule
+    /// Момент, когда переднее колесо пересекло линию при выезде.
+    let startFront: Double
+    /// Момент, когда камера реально увидела пересечение ближним колесом.
+    let startNear: Double
+    let finishFront: Double?
+    let finishRear: Double?
+    let finishNear: Double?
+
+    init(id: UUID = UUID(), index: Int, rule: TimingRule = .frontToRear,
+         startFront: Double, startNear: Double,
+         finishFront: Double? = nil, finishRear: Double? = nil, finishNear: Double? = nil) {
+        self.id = id
+        self.index = index
+        self.rule = rule
+        self.startFront = startFront
+        self.startNear = startNear
+        self.finishFront = finishFront
+        self.finishRear = finishRear
+        self.finishNear = finishNear
+    }
+
+    var start: Double { startFront }
+
+    var finish: Double? {
+        switch rule {
+        case .frontToRear: return finishRear
+        case .frontToFront: return finishFront
+        }
+    }
 
     var duration: Double? { finish.map { $0 - start } }
+
+    /// Время круга по моментам, которые камера реально увидела (без
+    /// пересчёта на переднее/заднее колесо) — для сверки с оценкой.
+    var observedDuration: Double? { finishNear.map { $0 - startNear } }
+
+    func duration(for rule: TimingRule) -> Double? { with(rule: rule).duration }
+
+    func with(rule: TimingRule) -> LapAttempt {
+        LapAttempt(id: id, index: index, rule: rule, startFront: startFront, startNear: startNear,
+                   finishFront: finishFront, finishRear: finishRear, finishNear: finishNear)
+    }
 }
 
 private struct Crossing {
+    /// Когда ближняя к камере точка опоры байка пересекла линию.
     let time: Double
     /// Знаковое расстояние до линии было положительным непосредственно перед
     /// пересечением — используется только как метка направления проезда
     /// (см. pairLaps), само значение смысла не несёт.
     let fromPositiveSide: Bool
+    /// Оценка момента пересечения передним и задним колесом.
+    let tFront: Double
+    let tRear: Double
+    let delta: Double
+    let nearIsFront: Bool
+    /// false — камера видит оба колеса сама (или ракурс не позволяет оценить
+    /// разницу), и tFront == tRear == time.
+    let compensated: Bool
 }
 
-/// То же пересечение, что и Crossing, но с направлением, переведённым в
-/// понятный человеку смысл ("выезд"/"возврат") — для отладочного экрана:
-/// без него разобраться, почему заезды не состыковались, можно только по
-/// сырым логам из Xcode, а не на самом телефоне.
+/// То же пересечение, но с направлением, переведённым в понятный человеку
+/// смысл ("выезд"/"возврат") — для отладочного экрана.
 struct CrossingDebugInfo: Identifiable {
     let id = UUID()
     let time: Double
     let isExit: Bool
+    let tFront: Double
+    let tRear: Double
+    let delta: Double
+    let nearIsFront: Bool
+    let compensated: Bool
 }
 
 struct AnalysisOutput {
@@ -83,7 +156,91 @@ private struct ROI {
     var height: Int { y1 - y0 }
 }
 
+/// Результат поиска самого большого пятна на маске (в координатах
+/// прореженного кадра/кропа).
+private struct ComponentResult {
+    let area: Int
+    let cx: Double
+    let cy: Double
+    let leftX: Int
+    let leftY: Int
+    let rightX: Int
+    let rightY: Int
+    let minY: Int
+    let maxY: Int
+}
+
+/// Буферы одного прохода по видео: выделяются один раз, а не на каждый кадр
+/// (на длинной сессии это тысячи кадров и сотни мегабайт аллокаций).
+private final class TrackerScratch {
+    let count: Int
+    let gray: UnsafeMutablePointer<UInt8>
+    let mask: UnsafeMutablePointer<UInt8>
+    let background: UnsafeMutablePointer<Float>
+    let a: UnsafeMutablePointer<UInt8>
+    let b: UnsafeMutablePointer<UInt8>
+    let c: UnsafeMutablePointer<UInt8>
+    let visited: UnsafeMutablePointer<UInt8>
+    let dq: UnsafeMutablePointer<Int32>
+    let stack: UnsafeMutablePointer<Int32>
+    var comp: UnsafeMutablePointer<Int32>
+    var best: UnsafeMutablePointer<Int32>
+
+    init(width: Int, height: Int) {
+        count = width * height
+        gray = .allocate(capacity: count)
+        mask = .allocate(capacity: count)
+        background = .allocate(capacity: count)
+        a = .allocate(capacity: count)
+        b = .allocate(capacity: count)
+        c = .allocate(capacity: count)
+        visited = .allocate(capacity: count)
+        dq = .allocate(capacity: max(width, height) + 1)
+        stack = .allocate(capacity: count)
+        comp = .allocate(capacity: count)
+        best = .allocate(capacity: count)
+        gray.initialize(repeating: 0, count: count)
+        mask.initialize(repeating: 0, count: count)
+        background.initialize(repeating: 0, count: count)
+        a.initialize(repeating: 0, count: count)
+        b.initialize(repeating: 0, count: count)
+        c.initialize(repeating: 0, count: count)
+        visited.initialize(repeating: 0, count: count)
+        dq.initialize(repeating: 0, count: max(width, height) + 1)
+        stack.initialize(repeating: 0, count: count)
+        comp.initialize(repeating: 0, count: count)
+        best.initialize(repeating: 0, count: count)
+    }
+
+    deinit {
+        gray.deallocate()
+        mask.deallocate()
+        background.deallocate()
+        a.deallocate()
+        b.deallocate()
+        c.deallocate()
+        visited.deallocate()
+        dq.deallocate()
+        stack.deallocate()
+        comp.deallocate()
+        best.deallocate()
+    }
+}
+
 enum VideoAnalyzer {
+
+    /// Допущения, на которых держится оценка "переднее/заднее колесо" по
+    /// одной камере (см. makeCrossing). Это грубая оценка, а не измерение.
+    private enum Geometry {
+        static let wheelbaseMeters = 1.5
+        static let riderAndBikeHeightMeters = 1.6
+        static let cameraHeightMeters = 1.3
+        /// Фокусное расстояние основной камеры iPhone в долях ширины кадра.
+        static let focalOverWidth = 0.78
+        static let compensationWindowSeconds = 0.3
+        static let minDelta = 0.05
+        static let maxDelta = 1.2
+    }
 
     // MARK: - Публичная точка входа
 
@@ -97,8 +254,8 @@ enum VideoAnalyzer {
         // AVCaptureConnection.videoOrientation, зафиксированная на landscapeRight
         // при своей записи (CameraController.swift). Калибровочный кадр в
         // CalibrationView, наоборот, показывается с учётом preferredTransform.
-        // Если у импортированного через debug-режим файла транспонирование не
-        // единичное (например, видео снято в портретной ориентации), эти два
+        // Если у импортированного файла транспонирование не единичное
+        // (например, видео снято в портретной ориентации), эти два
         // представления разъедутся, и калибровочные точки будут указывать не
         // туда — лучше явно отказать, чем тихо посчитать неверное время.
         let transform = try await videoTrack.load(.preferredTransform)
@@ -110,39 +267,49 @@ enum VideoAnalyzer {
         let width = Int(naturalSize.width.rounded())
         let height = Int(naturalSize.height.rounded())
 
-        // Все геометрические константы ниже (отступ ROI, минимальная площадь
-        // пятна, порог "настоящего проезда", ядра морфологии) подобраны и
-        // провалидированы на кадре 1920x1080 — том, что даёт стандартная
-        // съёмка (см. CameraController: sessionPreset = .hd1920x1080). Если
-        // фактическое разрешение видео другое (например, сжатая копия для
-        // тестов, или другая камера/пресет), их нужно пропорционально
-        // пересчитать, иначе на вдвое уменьшенном кадре реальный байк займёт
-        // вчетверо меньше пикселей, чем ожидает порог площади — и трекинг
-        // почти ничего не найдёт.
+        // Все геометрические константы (отступ ROI, минимальная площадь
+        // пятна, порог "настоящего проезда", ядра морфологии) подобраны на
+        // кадре 1920x1080 — пересчитываются пропорционально реальному
+        // разрешению.
         let scale = Double(width) / 1920.0
 
-        let roi = makeROI(p1: p1, p2: p2, frameWidth: width, frameHeight: height, scale: scale)
-        print("[VideoAnalyzer] \(videoURL.lastPathComponent): \(width)x\(height), scale=\(scale), roi=\(roi.x0),\(roi.y0)-\(roi.x1),\(roi.y1)")
+        // Для полного HD обрабатываем ROI в половинном разрешении: точность
+        // положения силуэта в 2 пикселя на таком кадре — доли миллисекунды
+        // по времени пересечения, а работы в 4 раза меньше.
+        let decimation = width >= 1400 ? 2 : 1
 
-        let staticEndFrame = try detectStaticEnd(asset: asset, videoTrack: videoTrack)
-        print("[VideoAnalyzer] \(videoURL.lastPathComponent): staticEndFrame=\(staticEndFrame?.description ?? "nil")")
-        let records = try trackMotorcycle(asset: asset, videoTrack: videoTrack, roi: roi, staticEndFrame: staticEndFrame, scale: scale)
-        print("[VideoAnalyzer] \(videoURL.lastPathComponent): trackMotorcycle done, \(records.count) detections")
-        let crossings = analyzeCrossings(records: records, p1: p1, p2: p2, areaThresh: 8000 * scale * scale)
+        let roi = makeROI(p1: p1, p2: p2, frameWidth: width, frameHeight: height, scale: scale, decimation: decimation)
+        print("[VideoAnalyzer] \(videoURL.lastPathComponent): \(width)x\(height), scale=\(scale), d=\(decimation), roi=\(roi.x0),\(roi.y0)-\(roi.x1),\(roi.y1)")
 
+        // Поиск момента, когда камеру берут в руки, и сам трекинг — два
+        // независимых полных прохода по видео; считаем их одновременно, а
+        // кадры после конца штатива просто отбрасываем.
+        let started = Date()
+        async let staticEnd = detectStaticEnd(url: videoURL)
+        async let tracked = trackMotorcycle(url: videoURL, roi: roi, scale: scale, decimation: decimation)
+        let staticEndFrame = try await staticEnd
+        var records = try await tracked
+        if let limit = staticEndFrame {
+            records = records.filter { $0.frame < limit }
+        }
+        print("[VideoAnalyzer] \(videoURL.lastPathComponent): staticEndFrame=\(staticEndFrame?.description ?? "nil"), \(records.count) detections, \(String(format: "%.1f", Date().timeIntervalSince(started)))с")
+
+        let crossings = analyzeCrossings(records: records, p1: p1, p2: p2,
+                                         areaThresh: 8000 * scale * scale, frameWidth: width)
         let (laps, startDirection) = pairLaps(crossings: crossings)
         guard !laps.isEmpty else {
             throw AnalyzerError.noStartFinishFound
         }
         let debugCrossings = crossings.map {
-            CrossingDebugInfo(time: $0.time, isExit: $0.fromPositiveSide == startDirection)
+            CrossingDebugInfo(time: $0.time, isExit: $0.fromPositiveSide == startDirection,
+                              tFront: $0.tFront, tRear: $0.tRear, delta: $0.delta,
+                              nearIsFront: $0.nearIsFront, compensated: $0.compensated)
         }
         return AnalysisOutput(laps: laps, crossings: debugCrossings)
     }
 
     /// Ближайшее нечётное число (округление вниз, если между двумя нечётными) —
-    /// для масштабирования размера ядра морфологии. При scale=1.0 (эталонное
-    /// 1920x1080) возвращает исходные 9/15 без изменений.
+    /// для масштабирования размера ядра морфологии.
     private static func nearestOdd(_ x: Double) -> Int {
         let v = Int(x)
         return v % 2 == 0 ? v + 1 : v
@@ -150,25 +317,36 @@ enum VideoAnalyzer {
 
     // MARK: - Шаг 2 (из спецификации): область наблюдения вокруг створа
 
-    private static func makeROI(p1: CGPoint, p2: CGPoint, frameWidth: Int, frameHeight: Int, scale: Double) -> ROI {
+    /// Сверху отступ больше, чем снизу: нужен весь рост райдера с байком,
+    /// чтобы по нему оценивать масштаб (см. makeCrossing).
+    private static func makeROI(p1: CGPoint, p2: CGPoint, frameWidth: Int, frameHeight: Int,
+                                scale: Double, decimation d: Int) -> ROI {
         let padX = Int((300 * scale).rounded())
-        let padY = Int((250 * scale).rounded())
+        let padTop = Int((400 * scale).rounded())
+        let padBottom = Int((250 * scale).rounded())
         let minX = Int(min(p1.x, p2.x)) - padX
         let maxX = Int(max(p1.x, p2.x)) + padX
-        let minY = Int(min(p1.y, p2.y)) - padY
-        let maxY = Int(max(p1.y, p2.y)) + padY
-        return ROI(
-            x0: max(0, minX),
-            y0: max(0, minY),
-            x1: min(frameWidth, maxX),
-            y1: min(frameHeight, maxY)
-        )
+        let minY = Int(min(p1.y, p2.y)) - padTop
+        let maxY = Int(max(p1.y, p2.y)) + padBottom
+        var x0 = max(0, minX)
+        var y0 = max(0, minY)
+        var x1 = min(frameWidth, maxX)
+        var y1 = min(frameHeight, maxY)
+        x0 -= x0 % d
+        y0 -= y0 % d
+        x1 -= (x1 - x0) % d
+        y1 -= (y1 - y0) % d
+        return ROI(x0: x0, y0: y0, x1: x1, y1: y1)
     }
 
     // MARK: - Шаг 1: определение статичного участка видео
 
-    private static func detectStaticEnd(asset: AVURLAsset, videoTrack: AVAssetTrack,
-                                         threshold: Double = 3.0, minRun: Int = 10) throws -> Int? {
+    private static func detectStaticEnd(url: URL, threshold: Double = 3.0, minRun: Int = 10) async throws -> Int? {
+        let asset = AVURLAsset(url: url)
+        guard let videoTrack = try await asset.loadTracks(withMediaType: .video).first else {
+            throw AnalyzerError.noVideoTrack
+        }
+
         let smallW = 240
         let smallH = 135
 
@@ -185,7 +363,10 @@ enum VideoAnalyzer {
 
         var prevGray: [UInt8]?
         var diffs: [Double] = []
+        var frameIdx = 0
         while let sample = output.copyNextSampleBuffer() {
+            if frameIdx % 60 == 0 { try Task.checkCancellation() }
+            frameIdx += 1
             guard let pixelBuffer = CMSampleBufferGetImageBuffer(sample) else { continue }
             let gray = grayscaleBuffer(pixelBuffer, width: smallW, height: smallH)
             if let prevGray {
@@ -259,237 +440,341 @@ enum VideoAnalyzer {
 
     // MARK: - Шаг 3: трекинг мотоцикла в ROI
 
-    private static func trackMotorcycle(asset: AVURLAsset, videoTrack: AVAssetTrack, roi: ROI,
-                                         staticEndFrame: Int?, scale: Double) throws -> [DetectionRecord] {
+    /// Быстрый путь по сравнению с первой версией:
+    ///  - декодер сразу отдаёт YUV 4:2:0, берём плоскость яркости как есть
+    ///    (раньше — конвертация каждого пикселя ROI из BGRA во float);
+    ///  - ROI усредняется 2x2 перед любой обработкой (в 4 раза меньше пикселей);
+    ///  - маска считается за один проход вместе с обновлением фона, и сразу
+    ///    находится прямоугольник, где вообще что-то движется — морфология и
+    ///    поиск пятен идут только по нему (на кадрах без байка — вообще мимо);
+    ///  - буферы выделяются один раз на весь проход.
+    private static func trackMotorcycle(url: URL, roi: ROI, scale: Double, decimation d: Int) async throws -> [DetectionRecord] {
+        let asset = AVURLAsset(url: url)
+        guard let videoTrack = try await asset.loadTracks(withMediaType: .video).first else {
+            throw AnalyzerError.noVideoTrack
+        }
+
         let reader = try AVAssetReader(asset: asset)
-        let settings: [String: Any] = [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA]
+        let settings: [String: Any] = [
+            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
+        ]
         let output = AVAssetReaderTrackOutput(track: videoTrack, outputSettings: settings)
         output.alwaysCopiesSampleData = false
         reader.add(output)
-        reader.startReading()
+        guard reader.startReading() else {
+            throw reader.error ?? AnalyzerError.noVideoTrack
+        }
+        defer { reader.cancelReading() }
 
-        var background: [Float]?
-        var records: [DetectionRecord] = []
-        var frameIdx = 0
-        let openKernel = nearestOdd(9 * scale)
-        let closeKernel = nearestOdd(15 * scale)
-        let bandPx = Int((15 * scale).rounded())
-        // Подобрано валидацией на 4 реальных заездах (см. README): при alpha=0.05
-        // скользящее среднее слишком медленно "забывает" байк — низкоскоростной/
-        // покачивающийся участок у линии остаётся в фоне ещё десятки кадров,
-        // контур получает длинный шлейф, и это систематически сдвигало
-        // расчётное время круга (~0.6–0.8с) относительно референса. Более
-        // быстрая адаптация (alpha=0.25) ведёт себя ближе к покадровому диффу,
-        // даёт чёткую границу движения без шлейфа и возвращает точность в
-        // диапазон python-версии (~0.2–0.4с при той же связке порогов).
+        let w = roi.width / d
+        let h = roi.height / d
+        guard w >= 16, h >= 16 else { return [] }
+
+        let ds = Double(d)
+        let openKernel = nearestOdd(9 * scale / ds)
+        let closeKernel = nearestOdd(15 * scale / ds)
+        let openR = openKernel / 2
+        let closeR = closeKernel / 2
+        let bandPx = max(1, Int((15 * scale / ds).rounded()))
+        let minArea = max(8, Int((300 * scale * scale / (ds * ds)).rounded()))
+        let margin = 2 * (openR + closeR) + 2
+        let rawSkipCount = max(8, minArea / 3)
+        // Подобрано валидацией на 4 реальных заездах (см. README): быстрая
+        // адаптация фона (alpha=0.25) даёт чёткую границу движения без шлейфа.
         let varThreshold: Float = 28
         let alpha: Float = 0.25
-        let minArea = Int((300 * scale * scale).rounded())
+
+        let scratch = TrackerScratch(width: w, height: h)
+        var hasBackground = false
+        var records: [DetectionRecord] = []
+        var frameIdx = 0
 
         while let sample = output.copyNextSampleBuffer() {
-            if let staticEndFrame, frameIdx >= staticEndFrame { break }
             defer { frameIdx += 1 }
+            if frameIdx % 30 == 0 { try Task.checkCancellation() }
             if frameIdx % 300 == 0 {
                 print("[VideoAnalyzer] trackMotorcycle: frame \(frameIdx), \(records.count) detections so far")
             }
             guard let pixelBuffer = CMSampleBufferGetImageBuffer(sample) else { continue }
             let t = CMTimeGetSeconds(CMSampleBufferGetPresentationTimeStamp(sample))
-            let gray = roiGrayscale(pixelBuffer, roi: roi)
 
-            guard var bg = background else {
-                background = gray
+            extractLuma(pixelBuffer, roi: roi, decimation: d, width: w, height: h, into: scratch.gray)
+
+            if !hasBackground {
+                for i in 0..<scratch.count { scratch.background[i] = Float(scratch.gray[i]) }
+                hasBackground = true
                 continue
             }
 
-            var mask = [UInt8](repeating: 0, count: roi.width * roi.height)
-            for i in 0..<gray.count {
-                let diff = abs(gray[i] - bg[i])
-                mask[i] = diff > varThreshold ? 255 : 0
-                bg[i] = bg[i] * (1 - alpha) + gray[i] * alpha
+            // Маска + обновление фона + ограничивающий прямоугольник движения.
+            var fgCount = 0
+            var minX = w
+            var maxX = -1
+            var minY = h
+            var maxY = -1
+            for y in 0..<h {
+                let row = y * w
+                for x in 0..<w {
+                    let i = row + x
+                    let g = Float(scratch.gray[i])
+                    let bg = scratch.background[i]
+                    if abs(g - bg) > varThreshold {
+                        scratch.mask[i] = 255
+                        fgCount += 1
+                        if x < minX { minX = x }
+                        if x > maxX { maxX = x }
+                        if y < minY { minY = y }
+                        if y > maxY { maxY = y }
+                    } else {
+                        scratch.mask[i] = 0
+                    }
+                    scratch.background[i] = bg * (1 - alpha) + g * alpha
+                }
             }
-            background = bg
+            if fgCount < rawSkipCount { continue }
 
-            // open (erode -> dilate), затем close (dilate -> erode) — размеры ядра
-            // масштабированы под фактическое разрешение, см. комментарий в analyze()
-            let opened = dilate(erode(mask, width: roi.width, height: roi.height, kernel: openKernel),
-                                 width: roi.width, height: roi.height, kernel: openKernel)
-            let closed = erode(dilate(opened, width: roi.width, height: roi.height, kernel: closeKernel),
-                                width: roi.width, height: roi.height, kernel: closeKernel)
+            // Кроп вокруг движения с запасом, достаточным, чтобы результат
+            // морфологии совпал с обработкой всего кадра целиком.
+            let cx0 = max(0, minX - margin)
+            let cx1 = min(w - 1, maxX + margin)
+            let cy0 = max(0, minY - margin)
+            let cy1 = min(h - 1, maxY + margin)
+            let cw = cx1 - cx0 + 1
+            let ch = cy1 - cy0 + 1
+            for row in 0..<ch {
+                (scratch.a + row * cw).update(from: scratch.mask + (cy0 + row) * w + cx0, count: cw)
+            }
 
-            guard frameIdx > 0,
-                  let component = largestComponent(mask: closed, width: roi.width, height: roi.height),
+            // open (erode -> dilate), затем close (dilate -> erode).
+            morphology(src: scratch.a, dst: scratch.c, tmp: scratch.b, dq: scratch.dq,
+                       width: cw, height: ch, radius: openR, isMin: true)
+            morphology(src: scratch.c, dst: scratch.a, tmp: scratch.b, dq: scratch.dq,
+                       width: cw, height: ch, radius: openR, isMin: false)
+            morphology(src: scratch.a, dst: scratch.c, tmp: scratch.b, dq: scratch.dq,
+                       width: cw, height: ch, radius: closeR, isMin: false)
+            morphology(src: scratch.c, dst: scratch.a, tmp: scratch.b, dq: scratch.dq,
+                       width: cw, height: ch, radius: closeR, isMin: true)
+
+            guard let component = largestComponent(scratch, width: cw, height: ch, bandPx: bandPx),
                   component.area > minArea else { continue }
 
-            var sumX = 0, sumY = 0, yMax = 0
-            for (x, y) in component.pixels {
-                sumX += x
-                sumY += y
-                if y > yMax { yMax = y }
-            }
-            let cx = Double(sumX) / Double(component.pixels.count) + Double(roi.x0)
-            let cy = Double(sumY) / Double(component.pixels.count) + Double(roi.y0)
-
-            let band = component.pixels.filter { $0.1 >= yMax - bandPx }
-            guard let leftPixel = band.min(by: { $0.0 < $1.0 }),
-                  let rightPixel = band.max(by: { $0.0 < $1.0 }) else { continue }
+            // Локальные координаты кропа -> полное разрешение кадра.
+            let offsetX = Double(roi.x0) + 0.5 * (ds - 1)
+            let offsetY = Double(roi.y0) + 0.5 * (ds - 1)
+            func fullX(_ lx: Double) -> Double { offsetX + ds * (Double(cx0) + lx) }
+            func fullY(_ ly: Double) -> Double { offsetY + ds * (Double(cy0) + ly) }
 
             records.append(DetectionRecord(
                 frame: frameIdx,
                 t: t,
-                cx: cx,
-                cy: cy,
-                area: component.area,
-                leftBottom: CGPoint(x: Double(leftPixel.0 + roi.x0), y: Double(leftPixel.1 + roi.y0)),
-                rightBottom: CGPoint(x: Double(rightPixel.0 + roi.x0), y: Double(rightPixel.1 + roi.y0))
+                cx: fullX(component.cx),
+                cy: fullY(component.cy),
+                area: component.area * d * d,
+                leftBottom: CGPoint(x: fullX(Double(component.leftX)), y: fullY(Double(component.leftY))),
+                rightBottom: CGPoint(x: fullX(Double(component.rightX)), y: fullY(Double(component.rightY))),
+                top: fullY(Double(component.minY)),
+                bottom: fullY(Double(component.maxY))
             ))
         }
-        reader.cancelReading()
         return records
     }
 
-    private static func roiGrayscale(_ pixelBuffer: CVPixelBuffer, roi: ROI) -> [Float] {
+    /// Усредняет блоки d x d яркости внутри ROI в плоский буфер w x h.
+    private static func extractLuma(_ pixelBuffer: CVPixelBuffer, roi: ROI, decimation d: Int,
+                                    width w: Int, height h: Int, into gray: UnsafeMutablePointer<UInt8>) {
         CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly)
         defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, .readOnly) }
-        var out = [Float](repeating: 0, count: roi.width * roi.height)
-        guard let base = CVPixelBufferGetBaseAddress(pixelBuffer) else { return out }
-        let bytesPerRow = CVPixelBufferGetBytesPerRow(pixelBuffer)
-        let ptr = base.assumingMemoryBound(to: UInt8.self)
-        for y in 0..<roi.height {
-            let row = ptr + (y + roi.y0) * bytesPerRow
-            for x in 0..<roi.width {
-                let px = row + (x + roi.x0) * 4
-                out[y * roi.width + x] = 0.299 * Float(px[2]) + 0.587 * Float(px[1]) + 0.114 * Float(px[0])
+        guard let base = CVPixelBufferGetBaseAddressOfPlane(pixelBuffer, 0) else {
+            gray.update(repeating: 0, count: w * h)
+            return
+        }
+        let stride = CVPixelBufferGetBytesPerRowOfPlane(pixelBuffer, 0)
+        let luma = base.assumingMemoryBound(to: UInt8.self)
+
+        if d == 1 {
+            for y in 0..<h {
+                let src = luma + (roi.y0 + y) * stride + roi.x0
+                (gray + y * w).update(from: src, count: w)
+            }
+            return
+        }
+
+        let area = d * d
+        for y in 0..<h {
+            let rowTop = luma + (roi.y0 + y * d) * stride + roi.x0
+            let dst = gray + y * w
+            for x in 0..<w {
+                var sum = 0
+                for dy in 0..<d {
+                    let row = rowTop + dy * stride + x * d
+                    for dx in 0..<d {
+                        sum += Int(row[dx])
+                    }
+                }
+                dst[x] = UInt8(truncatingIfNeeded: sum / area)
             }
         }
-        return out
     }
 
     // MARK: - Морфология (сепарабельные min/max-фильтры по квадратному ядру)
 
-    private static func erode(_ mask: [UInt8], width: Int, height: Int, kernel: Int) -> [UInt8] {
-        minMaxFilter(mask, width: width, height: height, kernel: kernel, isErode: true)
-    }
-
-    private static func dilate(_ mask: [UInt8], width: Int, height: Int, kernel: Int) -> [UInt8] {
-        minMaxFilter(mask, width: width, height: height, kernel: kernel, isErode: false)
-    }
-
-    /// Раньше это был наивный перебор окна на каждый пиксель — O(width*kernel)
-    /// на строку/столбец. Морфология гоняется 4 раза на кадр (open=erode+
-    /// dilate, close=dilate+erode) и оказалась основным, на что уходило
-    /// время обработки видео (~1.5 минуты на 70-секундный заезд). Скользящее
-    /// окно через монотонную очередь (van Herk/Gil-Werman) даёт ТОЧНО ТЕ ЖЕ
-    /// значения за O(width) амортизированно — не аппроксимация, а то же самое
-    /// min/max с теми же клэмпами на границе, просто быстрее их считать.
-    private static func minMaxFilter(_ mask: [UInt8], width: Int, height: Int, kernel: Int, isErode: Bool) -> [UInt8] {
-        let r = kernel / 2
-        var horizontal = [UInt8](repeating: 0, count: width * height)
-        mask.withUnsafeBufferPointer { src in
-            horizontal.withUnsafeMutableBufferPointer { dst in
-                var dq = [Int](repeating: 0, count: width)
-                for y in 0..<height {
-                    let rowBase = y * width
-                    slidingMinMax(src, base: rowBase, stride: 1, count: width, radius: r,
-                                  isMin: isErode, dq: &dq, dst: dst, dstBase: rowBase, dstStride: 1)
-                }
-            }
+    /// Один проход эрозии (isMin) или дилатации: сначала по строкам src->tmp,
+    /// затем по столбцам tmp->dst.
+    private static func morphology(src: UnsafeMutablePointer<UInt8>, dst: UnsafeMutablePointer<UInt8>,
+                                   tmp: UnsafeMutablePointer<UInt8>, dq: UnsafeMutablePointer<Int32>,
+                                   width: Int, height: Int, radius: Int, isMin: Bool) {
+        for y in 0..<height {
+            slidingMinMax(src: src, dst: tmp, base: y * width, stride: 1, count: width,
+                          radius: radius, isMin: isMin, dq: dq)
         }
-        var result = [UInt8](repeating: 0, count: width * height)
-        horizontal.withUnsafeBufferPointer { src in
-            result.withUnsafeMutableBufferPointer { dst in
-                var dq = [Int](repeating: 0, count: height)
-                for x in 0..<width {
-                    slidingMinMax(src, base: x, stride: width, count: height, radius: r,
-                                  isMin: isErode, dq: &dq, dst: dst, dstBase: x, dstStride: width)
-                }
-            }
+        for x in 0..<width {
+            slidingMinMax(src: tmp, dst: dst, base: x, stride: width, count: height,
+                          radius: radius, isMin: isMin, dq: dq)
         }
-        return result
     }
 
-    /// Скользящий минимум/максимум вдоль одной строки или столбца буфера
-    /// (base+stride задают с чего начать и с каким шагом идти — так одна
-    /// функция обслуживает и горизонтальный, и вертикальный проход). Очередь
-    /// `dq` хранит индексы с монотонно растущими/убывающими значениями —
-    /// голова очереди всегда даёт min/max текущего окна, каждый индекс
-    /// добавляется и убирается из очереди не больше одного раза за проход.
-    private static func slidingMinMax(_ src: UnsafeBufferPointer<UInt8>, base: Int, stride: Int, count: Int,
-                                       radius: Int, isMin: Bool, dq: inout [Int],
-                                       dst: UnsafeMutableBufferPointer<UInt8>, dstBase: Int, dstStride: Int) {
-        var head = 0, tail = 0
-        for i in 0..<count {
+    /// Скользящий минимум/максимум вдоль строки или столбца (base+stride) за
+    /// O(count) — монотонная очередь индексов: голова всегда даёт min/max
+    /// текущего окна, каждый индекс входит и выходит не больше раза. Это то же
+    /// самое min/max с теми же клэмпами на границе, что и наивный перебор
+    /// окна (проверено: результаты на эталонных видео совпали до тысячных).
+    private static func slidingMinMax(src: UnsafeMutablePointer<UInt8>, dst: UnsafeMutablePointer<UInt8>,
+                                      base: Int, stride: Int, count n: Int, radius r: Int, isMin: Bool,
+                                      dq: UnsafeMutablePointer<Int32>) {
+        var head = 0
+        var tail = 0
+        var i = 0
+        while i < n {
             let v = src[base + i * stride]
-            while tail > head {
-                let backVal = src[base + dq[tail - 1] * stride]
-                if isMin ? (backVal >= v) : (backVal <= v) {
-                    tail -= 1
-                } else {
-                    break
-                }
+            if isMin {
+                while tail > head && src[base + Int(dq[tail - 1]) * stride] >= v { tail -= 1 }
+            } else {
+                while tail > head && src[base + Int(dq[tail - 1]) * stride] <= v { tail -= 1 }
             }
-            dq[tail] = i
+            dq[tail] = Int32(i)
             tail += 1
-            let center = i - radius
+            let center = i - r
             if center >= 0 {
-                while dq[head] < center - radius { head += 1 }
-                dst[dstBase + center * dstStride] = src[base + dq[head] * stride]
+                while Int(dq[head]) < center - r { head += 1 }
+                dst[base + center * stride] = src[base + Int(dq[head]) * stride]
             }
+            i += 1
         }
-        var center = max(0, count - radius)
-        while center < count {
-            while dq[head] < center - radius { head += 1 }
-            dst[dstBase + center * dstStride] = src[base + dq[head] * stride]
+        var center = max(0, n - r)
+        while center < n {
+            while Int(dq[head]) < center - r { head += 1 }
+            dst[base + center * stride] = src[base + Int(dq[head]) * stride]
             center += 1
         }
     }
 
     // MARK: - Связные компоненты (аналог "самый большой контур")
 
-    private static func largestComponent(mask: [UInt8], width: Int, height: Int) -> (pixels: [(Int, Int)], area: Int)? {
-        var visited = [Bool](repeating: false, count: width * height)
-        var bestPixels: [(Int, Int)] = []
-        var stack: [(Int, Int)] = []
+    /// Ищет самое большое связное пятно в scratch.a (маска width x height) и
+    /// сразу считает по нему всё нужное — без промежуточных массивов пикселей.
+    private static func largestComponent(_ s: TrackerScratch, width: Int, height: Int, bandPx: Int) -> ComponentResult? {
+        let n = width * height
+        s.visited.update(repeating: 0, count: n)
+        let mask = s.a
+        var bestCount = 0
 
-        for y in 0..<height {
-            for x in 0..<width {
-                let idx = y * width + x
-                if mask[idx] == 0 || visited[idx] { continue }
-
-                var pixels: [(Int, Int)] = []
-                stack.removeAll(keepingCapacity: true)
-                stack.append((x, y))
-                visited[idx] = true
-                while let (cx, cy) = stack.popLast() {
-                    pixels.append((cx, cy))
-                    if cx > 0, mask[cy * width + cx - 1] != 0, !visited[cy * width + cx - 1] {
-                        visited[cy * width + cx - 1] = true
-                        stack.append((cx - 1, cy))
-                    }
-                    if cx < width - 1, mask[cy * width + cx + 1] != 0, !visited[cy * width + cx + 1] {
-                        visited[cy * width + cx + 1] = true
-                        stack.append((cx + 1, cy))
-                    }
-                    if cy > 0, mask[(cy - 1) * width + cx] != 0, !visited[(cy - 1) * width + cx] {
-                        visited[(cy - 1) * width + cx] = true
-                        stack.append((cx, cy - 1))
-                    }
-                    if cy < height - 1, mask[(cy + 1) * width + cx] != 0, !visited[(cy + 1) * width + cx] {
-                        visited[(cy + 1) * width + cx] = true
-                        stack.append((cx, cy + 1))
-                    }
+        var start = 0
+        while start < n {
+            if mask[start] == 0 || s.visited[start] != 0 {
+                start += 1
+                continue
+            }
+            var sp = 0
+            var cc = 0
+            s.stack[sp] = Int32(start)
+            sp += 1
+            s.visited[start] = 1
+            while sp > 0 {
+                sp -= 1
+                let idx = Int(s.stack[sp])
+                s.comp[cc] = Int32(idx)
+                cc += 1
+                let x = idx % width
+                let y = idx / width
+                if x > 0, mask[idx - 1] != 0, s.visited[idx - 1] == 0 {
+                    s.visited[idx - 1] = 1
+                    s.stack[sp] = Int32(idx - 1)
+                    sp += 1
                 }
-                if pixels.count > bestPixels.count {
-                    bestPixels = pixels
+                if x < width - 1, mask[idx + 1] != 0, s.visited[idx + 1] == 0 {
+                    s.visited[idx + 1] = 1
+                    s.stack[sp] = Int32(idx + 1)
+                    sp += 1
+                }
+                if y > 0, mask[idx - width] != 0, s.visited[idx - width] == 0 {
+                    s.visited[idx - width] = 1
+                    s.stack[sp] = Int32(idx - width)
+                    sp += 1
+                }
+                if y < height - 1, mask[idx + width] != 0, s.visited[idx + width] == 0 {
+                    s.visited[idx + width] = 1
+                    s.stack[sp] = Int32(idx + width)
+                    sp += 1
                 }
             }
+            if cc > bestCount {
+                bestCount = cc
+                let tmp = s.best
+                s.best = s.comp
+                s.comp = tmp
+            }
+            start += 1
         }
-        return bestPixels.isEmpty ? nil : (bestPixels, bestPixels.count)
+        guard bestCount > 0 else { return nil }
+
+        var sumX = 0
+        var sumY = 0
+        var minY = height
+        var maxY = 0
+        for k in 0..<bestCount {
+            let idx = Int(s.best[k])
+            let x = idx % width
+            let y = idx / width
+            sumX += x
+            sumY += y
+            if y < minY { minY = y }
+            if y > maxY { maxY = y }
+        }
+
+        var leftX = width
+        var leftY = maxY
+        var rightX = -1
+        var rightY = maxY
+        let bandTop = maxY - bandPx
+        for k in 0..<bestCount {
+            let idx = Int(s.best[k])
+            let y = idx / width
+            if y < bandTop { continue }
+            let x = idx % width
+            if x < leftX {
+                leftX = x
+                leftY = y
+            }
+            if x > rightX {
+                rightX = x
+                rightY = y
+            }
+        }
+
+        return ComponentResult(
+            area: bestCount,
+            cx: Double(sumX) / Double(bestCount),
+            cy: Double(sumY) / Double(bestCount),
+            leftX: leftX, leftY: leftY,
+            rightX: rightX, rightY: rightY,
+            minY: minY, maxY: maxY
+        )
     }
 
     // MARK: - Шаг 4: знаковое расстояние, сегменты, пересечения
 
     private static func analyzeCrossings(records: [DetectionRecord], p1: CGPoint, p2: CGPoint,
-                                          areaThresh: Double = 8000) -> [Crossing] {
+                                         areaThresh: Double, frameWidth: Int) -> [Crossing] {
         guard !records.isEmpty else { return [] }
 
         let d = CGPoint(x: p2.x - p1.x, y: p2.y - p1.y)
@@ -544,11 +829,88 @@ enum VideoAnalyzer {
                 if (d0 > 0) != (d1 > 0) {
                     let t0 = segRecords[i - 1].t, t1 = segRecords[i].t
                     let frac = -d0 / (d1 - d0)
-                    crossings.append(Crossing(time: t0 + frac * (t1 - t0), fromPositiveSide: d0 > 0))
+                    let tNear = t0 + frac * (t1 - t0)
+                    crossings.append(makeCrossing(
+                        tNear: tNear, fromPositive: d0 > 0, segRecords: segRecords, dist: dist,
+                        normalX: normalX, normalY: normalY, frameWidth: frameWidth
+                    ))
                 }
             }
         }
         return crossings.sorted { $0.time < $1.time }
+    }
+
+    /// Камера видит только ближнюю к ней точку опоры байка: при отъезде от
+    /// камеры это заднее колесо, при приближении — переднее. "Как лазер"
+    /// нужно переднее колесо на старте и заднее на финише, поэтому второе
+    /// колесо оценивается по времени: Δ = колёсная база / скорость.
+    ///
+    /// Масштаб берётся по самому байку с райдером (~1.6 м в кадре), а
+    /// сжатие по глубине — из предположения о высоте камеры (~1.3 м) и
+    /// фокусном расстоянии основной камеры iPhone. Это приближение с
+    /// погрешностью несколько десятков процентов от Δ (единицы-десятки
+    /// сотых секунды), а не измерение.
+    private static func makeCrossing(tNear: Double, fromPositive: Bool, segRecords: [DetectionRecord], dist: [Double],
+                                     normalX: Double, normalY: Double, frameWidth: Int) -> Crossing {
+        func plain() -> Crossing {
+            Crossing(time: tNear, fromPositiveSide: fromPositive, tFront: tNear, tRear: tNear,
+                     delta: 0, nearIsFront: true, compensated: false)
+        }
+
+        // Если линия почти вертикальна в кадре, "ближе к камере" не определено.
+        guard abs(normalY) >= 0.5 else { return plain() }
+        let cameraSidePositive = normalY > 0
+        let nearIsFront = fromPositive != cameraSidePositive
+
+        var window: [Int] = []
+        for i in 0..<segRecords.count where abs(segRecords[i].t - tNear) <= Geometry.compensationWindowSeconds {
+            window.append(i)
+        }
+        guard window.count >= 3 else { return plain() }
+
+        var silHeight = 0.0
+        var extents: [Double] = []
+        for i in window {
+            silHeight = max(silHeight, segRecords[i].bottom - segRecords[i].top)
+            let dx = segRecords[i].rightBottom.x - segRecords[i].leftBottom.x
+            let dy = segRecords[i].rightBottom.y - segRecords[i].leftBottom.y
+            extents.append(abs(dx * normalX + dy * normalY))
+        }
+        extents.sort()
+        let extent = extents[extents.count / 2]
+        guard silHeight > 20 else { return plain() }
+        // Оба колеса видны вдоль направления проезда — оценивать нечего.
+        guard extent < 0.25 * silHeight else { return plain() }
+
+        // Скорость ближней точки вдоль нормали к линии (пикс/с) — наклон
+        // линейной регрессии расстояния по времени в окне вокруг пересечения.
+        let ts = window.map { segRecords[$0].t - tNear }
+        let ds = window.map { dist[$0] }
+        let n = Double(window.count)
+        let meanT = ts.reduce(0, +) / n
+        let meanD = ds.reduce(0, +) / n
+        var num = 0.0
+        var den = 0.0
+        for k in 0..<window.count {
+            num += (ts[k] - meanT) * (ds[k] - meanD)
+            den += (ts[k] - meanT) * (ts[k] - meanT)
+        }
+        let speed = den > 1e-9 ? abs(num / den) : 0
+
+        let pixelsPerMeter = silHeight / Geometry.riderAndBikeHeightMeters
+        let focalPx = Geometry.focalOverWidth * Double(frameWidth)
+        let wheelbasePx = Geometry.wheelbaseMeters * Geometry.cameraHeightMeters
+            * pixelsPerMeter * pixelsPerMeter / focalPx
+        let rawDelta = speed > 5 ? wheelbasePx / speed : Geometry.maxDelta
+        let delta = min(Geometry.maxDelta, max(Geometry.minDelta, rawDelta))
+
+        if nearIsFront {
+            return Crossing(time: tNear, fromPositiveSide: fromPositive, tFront: tNear, tRear: tNear + delta,
+                            delta: delta, nearIsFront: true, compensated: true)
+        } else {
+            return Crossing(time: tNear, fromPositiveSide: fromPositive, tFront: max(0, tNear - delta), tRear: tNear,
+                            delta: delta, nearIsFront: false, compensated: true)
+        }
     }
 
     // MARK: - Шаг 5: группировка пересечений в заезды (старт → финиш)
@@ -583,9 +945,7 @@ enum VideoAnalyzer {
     /// а у последнего пересечения в первой "пачке" (все пересечения в
     /// пределах minLapDuration друг от друга перед самым первым разрывом) —
     /// на старте байк иногда покачивается туда-сюда через линию перед тем,
-    /// как окончательно уехать, и то самое первое пересечение в видео может
-    /// оказаться предварительным покачиванием НЕ в ту сторону (проверено на
-    /// реальных тестовых видео: 2 из 4 начинаются именно так).
+    /// как окончательно уехать.
     private static func pairLaps(crossings: [Crossing], minLapDuration: Double = 2.0) -> (laps: [LapAttempt], startDirection: Bool) {
         guard !crossings.isEmpty else { return ([], true) }
         var burstEnd = 0
@@ -594,23 +954,31 @@ enum VideoAnalyzer {
         }
         let startDirection = crossings[burstEnd].fromPositiveSide
 
+        func incomplete(_ s: Crossing, index: Int) -> LapAttempt {
+            LapAttempt(index: index, startFront: s.tFront, startNear: s.time)
+        }
+        func complete(_ s: Crossing, _ f: Crossing, index: Int) -> LapAttempt {
+            LapAttempt(index: index, startFront: s.tFront, startNear: s.time,
+                       finishFront: f.tFront, finishRear: f.tRear, finishNear: f.time)
+        }
+
         var laps: [LapAttempt] = []
-        var pendingStart: Double?
+        var pendingStart: Crossing?
         for crossing in crossings {
             if crossing.fromPositiveSide == startDirection {
-                if let unfinished = pendingStart, crossing.time - unfinished >= minLapDuration {
-                    laps.append(LapAttempt(index: laps.count + 1, start: unfinished, finish: nil))
+                if let unfinished = pendingStart, crossing.time - unfinished.time >= minLapDuration {
+                    laps.append(incomplete(unfinished, index: laps.count + 1))
                 }
-                pendingStart = crossing.time
-            } else if let started = pendingStart, crossing.time - started >= minLapDuration {
-                laps.append(LapAttempt(index: laps.count + 1, start: started, finish: crossing.time))
+                pendingStart = crossing
+            } else if let started = pendingStart, crossing.time - started.time >= minLapDuration {
+                laps.append(complete(started, crossing, index: laps.count + 1))
                 pendingStart = nil
             }
             // иначе: пересечение случилось раньше minLapDuration после
             // pendingStart — тот же дребезг у створа, см. комментарий выше.
         }
         if let unfinished = pendingStart {
-            laps.append(LapAttempt(index: laps.count + 1, start: unfinished, finish: nil))
+            laps.append(incomplete(unfinished, index: laps.count + 1))
         }
         return (laps, startDirection)
     }

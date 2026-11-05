@@ -50,6 +50,8 @@ final class VideoAnalyzerTests: XCTestCase {
     /// (сорвавшийся трекинг, неверный старт/финиш), а не платформенные
     /// отличия декодера H.264 между OpenCV и AVFoundation.
     private let maxAllowedError = 1.0
+    /// Для правила «перед → зад» добавляется оценка базы (≈0.1–0.5с), допуск шире.
+    private let maxAllowedRuleError = 2.0
 
     func testAccuracyAgainstReferenceVideos() async throws {
         var failures: [String] = []
@@ -62,20 +64,28 @@ final class VideoAnalyzerTests: XCTestCase {
             }
 
             do {
+                let started = Date()
                 let output = try await VideoAnalyzer.analyze(videoURL: url, p1: testCase.p1, p2: testCase.p2)
+                let elapsed = Date().timeIntervalSince(started)
                 let laps = output.laps
-                guard let lap = laps.first(where: { $0.finish != nil }), let duration = lap.duration else {
+                guard let lap = laps.first(where: { $0.finish != nil }),
+                      let observed = lap.observedDuration,
+                      let ff = lap.duration(for: .frontToFront),
+                      let fr = lap.duration(for: .frontToRear) else {
                     failures.append("\(testCase.videoName): не найден завершённый заезд (попыток: \(laps.count))")
                     continue
                 }
-                let diff = duration - testCase.referenceSeconds
-                print(String(format: "[%@] круг=%.3fс старт=%.3fс финиш=%.3fс референс=%.2fс разница=%+.3fс всего попыток=%d",
-                             testCase.videoName, duration, lap.start, lap.finish ?? -1,
-                             testCase.referenceSeconds, diff, laps.count))
+                let ref = testCase.referenceSeconds
+                print(String(format: "[%@] анализ=%.1fс наблюдаемый=%.3fс (%+.3f) перед-перед=%.3fс (%+.3f) перед-зад=%.3fс (%+.3f) референс=%.2fс попыток=%d",
+                             testCase.videoName, elapsed, observed, observed - ref, ff, ff - ref, fr, fr - ref, ref, laps.count))
 
-                if abs(diff) > maxAllowedError {
-                    failures.append(String(format: "%@: круг=%.3fс, референс=%.2fс, разница=%+.3fс (допуск ±%.1fс)",
-                                            testCase.videoName, duration, testCase.referenceSeconds, diff, maxAllowedError))
+                if abs(observed - ref) > maxAllowedError {
+                    failures.append(String(format: "%@: наблюдаемый круг=%.3fс, референс=%.2fс, разница=%+.3fс (допуск ±%.1fс)",
+                                            testCase.videoName, observed, ref, observed - ref, maxAllowedError))
+                }
+                if abs(fr - ref) > maxAllowedRuleError {
+                    failures.append(String(format: "%@: круг (перед→зад)=%.3fс, референс=%.2fс, разница=%+.3fс (допуск ±%.1fс)",
+                                            testCase.videoName, fr, ref, fr - ref, maxAllowedRuleError))
                 }
             } catch {
                 failures.append("\(testCase.videoName): VideoAnalyzer выбросил ошибку — \(error)")
