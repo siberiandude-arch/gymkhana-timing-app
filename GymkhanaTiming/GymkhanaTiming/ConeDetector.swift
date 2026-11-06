@@ -71,16 +71,22 @@ enum ConeDetector {
 
         var pixels = [UInt8](repeating: 0, count: w * h * 4)
         let colorSpace = CGColorSpaceCreateDeviceRGB()
-        guard let ctx = CGContext(data: &pixels, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4,
-                                   space: colorSpace, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else {
-            throw DetectionError.bitmapCreationFailed
+        // Здесь переворот НЕ нужен: у bitmap-контекста CoreGraphics первая
+        // строка в памяти — это верх картинки, даже если система координат
+        // идёт снизу вверх. Раньше здесь стоял переворот (по ошибке), и
+        // детектор видел кадр вверх ногами: основание конуса находилось как
+        // его вершина, линия ложилась не туда. Маска контура выше как раз
+        // рисуется с переворотом — она задана в координатах "сверху вниз".
+        let drawn = pixels.withUnsafeMutableBytes { raw -> Bool in
+            guard let ctx = CGContext(data: raw.baseAddress, width: w, height: h, bitsPerComponent: 8,
+                                      bytesPerRow: w * 4, space: colorSpace,
+                                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else {
+                return false
+            }
+            ctx.draw(cropped, in: CGRect(x: 0, y: 0, width: w, height: h))
+            return true
         }
-        // CGContext по умолчанию рисует снизу вверх; переворачиваем, чтобы
-        // строка 0 в pixels соответствовала верху кадра — так же, как везде
-        // в VideoAnalyzer (иначе найдём верхушку конуса вместо основания).
-        ctx.translateBy(x: 0, y: CGFloat(h))
-        ctx.scaleBy(x: 1, y: -1)
-        ctx.draw(cropped, in: CGRect(x: 0, y: 0, width: w, height: h))
+        guard drawn else { throw DetectionError.bitmapCreationFailed }
 
         // Конусы бывают любого цвета, поэтому ищем не конкретный цвет, а то,
         // что заметно отличается от асфальта: берём типичный (медианный)
