@@ -236,15 +236,22 @@ enum VideoAnalyzer {
 
     /// Допущения, на которых держится оценка "переднее/заднее колесо" по
     /// одной камере (см. makeCrossing). Это грубая оценка, а не измерение.
+    /// Поправка на второе колесо. Камера видит момент пересечения только
+    /// ближним к ней колесом; второе пересекает линию позже/раньше на
+    /// Δ = колёсная база / скорость.
+    ///
+    /// Сначала Δ оценивалась по скорости из кадра (через размер байка и
+    /// высоту камеры), но на реальных видео модель давала 0.08–0.10 с при
+    /// реальных ≈0.5 с (проверено покадровой разметкой клипа с телефона и
+    /// сверкой с телеметрией на четырёх эталонных видео): скорость вдоль
+    /// нормали к линии при диагональном проезде и с тенью под байком
+    /// не пересчитывается в метры надёжно. Поэтому взяты типичные значения
+    /// (колёсная база ≈1.5 м): на старте байк только набирает скорость
+    /// (≈3.5 м/с → 0.45 с), на финише едет быстрее (≈4–5 м/с → 0.35 с).
+    /// Это оценка, а не измерение: ошибка порядка 0.1–0.2 с.
     private enum Geometry {
-        static let wheelbaseMeters = 1.5
-        static let riderAndBikeHeightMeters = 1.6
-        static let cameraHeightMeters = 1.3
-        /// Фокусное расстояние основной камеры iPhone в долях ширины кадра.
-        static let focalOverWidth = 0.78
-        static let compensationWindowSeconds = 0.3
-        static let minDelta = 0.05
-        static let maxDelta = 1.2
+        static let startDelta = 0.45
+        static let finishDelta = 0.35
     }
 
     // MARK: - Публичная точка входа
@@ -835,10 +842,7 @@ enum VideoAnalyzer {
                     let t0 = segRecords[i - 1].t, t1 = segRecords[i].t
                     let frac = -d0 / (d1 - d0)
                     let tNear = t0 + frac * (t1 - t0)
-                    crossings.append(makeCrossing(
-                        tNear: tNear, fromPositive: d0 > 0, segRecords: segRecords, dist: dist,
-                        normalX: normalX, normalY: normalY, frameWidth: frameWidth
-                    ))
+                    crossings.append(makeCrossing(tNear: tNear, fromPositive: d0 > 0, normalY: normalY))
                 }
             }
         }
@@ -848,73 +852,25 @@ enum VideoAnalyzer {
     /// Камера видит только ближнюю к ней точку опоры байка: при отъезде от
     /// камеры это заднее колесо, при приближении — переднее. "Как лазер"
     /// нужно переднее колесо на старте и заднее на финише, поэтому второе
-    /// колесо оценивается по времени: Δ = колёсная база / скорость.
-    ///
-    /// Масштаб берётся по самому байку с райдером (~1.6 м в кадре), а
-    /// сжатие по глубине — из предположения о высоте камеры (~1.3 м) и
-    /// фокусном расстоянии основной камеры iPhone. Это приближение с
-    /// погрешностью несколько десятков процентов от Δ (единицы-десятки
-    /// сотых секунды), а не измерение.
-    private static func makeCrossing(tNear: Double, fromPositive: Bool, segRecords: [DetectionRecord], dist: [Double],
-                                     normalX: Double, normalY: Double, frameWidth: Int) -> Crossing {
-        func plain() -> Crossing {
-            Crossing(time: tNear, fromPositiveSide: fromPositive, tFront: tNear, tRear: tNear,
-                     delta: 0, nearIsFront: true, compensated: false)
-        }
-
+    /// колесо добавляется поправкой (см. Geometry).
+    private static func makeCrossing(tNear: Double, fromPositive: Bool, normalY: Double) -> Crossing {
         // Если линия почти вертикальна в кадре, "ближе к камере" не определено.
-        guard abs(normalY) >= 0.5 else { return plain() }
+        guard abs(normalY) >= 0.5 else {
+            return Crossing(time: tNear, fromPositiveSide: fromPositive, tFront: tNear, tRear: tNear,
+                            delta: 0, nearIsFront: true, compensated: false)
+        }
         let cameraSidePositive = normalY > 0
         let nearIsFront = fromPositive != cameraSidePositive
-
-        var window: [Int] = []
-        for i in 0..<segRecords.count where abs(segRecords[i].t - tNear) <= Geometry.compensationWindowSeconds {
-            window.append(i)
-        }
-        guard window.count >= 3 else { return plain() }
-
-        var silHeight = 0.0
-        var extents: [Double] = []
-        for i in window {
-            silHeight = max(silHeight, segRecords[i].bottom - segRecords[i].top)
-            let dx = segRecords[i].rightBottom.x - segRecords[i].leftBottom.x
-            let dy = segRecords[i].rightBottom.y - segRecords[i].leftBottom.y
-            extents.append(abs(dx * normalX + dy * normalY))
-        }
-        extents.sort()
-        let extent = extents[extents.count / 2]
-        guard silHeight > 20 else { return plain() }
-        // Оба колеса видны вдоль направления проезда — оценивать нечего.
-        guard extent < 0.25 * silHeight else { return plain() }
-
-        // Скорость ближней точки вдоль нормали к линии (пикс/с) — наклон
-        // линейной регрессии расстояния по времени в окне вокруг пересечения.
-        let ts = window.map { segRecords[$0].t - tNear }
-        let ds = window.map { dist[$0] }
-        let n = Double(window.count)
-        let meanT = ts.reduce(0, +) / n
-        let meanD = ds.reduce(0, +) / n
-        var num = 0.0
-        var den = 0.0
-        for k in 0..<window.count {
-            num += (ts[k] - meanT) * (ds[k] - meanD)
-            den += (ts[k] - meanT) * (ts[k] - meanT)
-        }
-        let speed = den > 1e-9 ? abs(num / den) : 0
-
-        let pixelsPerMeter = silHeight / Geometry.riderAndBikeHeightMeters
-        let focalPx = Geometry.focalOverWidth * Double(frameWidth)
-        let wheelbasePx = Geometry.wheelbaseMeters * Geometry.cameraHeightMeters
-            * pixelsPerMeter * pixelsPerMeter / focalPx
-        let rawDelta = speed > 5 ? wheelbasePx / speed : Geometry.maxDelta
-        let delta = min(Geometry.maxDelta, max(Geometry.minDelta, rawDelta))
-
         if nearIsFront {
-            return Crossing(time: tNear, fromPositiveSide: fromPositive, tFront: tNear, tRear: tNear + delta,
-                            delta: delta, nearIsFront: true, compensated: true)
+            // ближнее — переднее: на старте оно и нужно, на финише заднее придёт позже
+            return Crossing(time: tNear, fromPositiveSide: fromPositive, tFront: tNear,
+                            tRear: tNear + Geometry.finishDelta,
+                            delta: Geometry.finishDelta, nearIsFront: true, compensated: true)
         } else {
-            return Crossing(time: tNear, fromPositiveSide: fromPositive, tFront: max(0, tNear - delta), tRear: tNear,
-                            delta: delta, nearIsFront: false, compensated: true)
+            // ближнее — заднее: переднее пересекло линию раньше
+            return Crossing(time: tNear, fromPositiveSide: fromPositive,
+                            tFront: max(0, tNear - Geometry.startDelta), tRear: tNear,
+                            delta: Geometry.startDelta, nearIsFront: false, compensated: true)
         }
     }
 
