@@ -67,6 +67,11 @@ final class VideoAnalyzerTests: XCTestCase {
                 let started = Date()
                 let output = try await VideoAnalyzer.analyze(videoURL: url, p1: testCase.p1, p2: testCase.p2)
                 let elapsed = Date().timeIntervalSince(started)
+                for c in output.crossings {
+                    print(String(format: "[%@] пересечение t=%.3f %@ до=%.0f после=%.0f силуэт=%.0f",
+                                 testCase.videoName, c.time, c.isExit ? "выезд" : "возврат",
+                                 c.excursionBefore, c.excursionAfter, c.silHeight))
+                }
                 let laps = output.laps
                 guard let lap = laps.first(where: { $0.finish != nil }),
                       let observed = lap.observedDuration,
