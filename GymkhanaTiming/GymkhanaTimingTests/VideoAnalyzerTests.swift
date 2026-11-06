@@ -139,6 +139,40 @@ final class PhoneLapClipTests: XCTestCase {
     }
 }
 
+/// Второй клип с телефона (1280x720, линия и таймер вшиты в кадр). Байк
+/// подъезжает к воротам, проезжает у правого конуса и останавливается
+/// рядом с ним; в самом конце клипа камеру берут в руки, и кадр "прыгает"
+/// (это не проезд!). Разбор по кадрам (секунды от начала клипа):
+///   переднее колесо пересекает линию ≈66.5, заднее ≈66.9.
+/// Приложение же остановило таймер на 69.74 — по скачку камеры.
+final class PhoneLap2Tests: XCTestCase {
+    func testFinishIsNotTriggeredByCameraJolt() async throws {
+        guard let url = Bundle(for: PhoneLap2Tests.self)
+            .url(forResource: "phone_lap2", withExtension: "mp4", subdirectory: "TestVideos") else {
+            XCTFail("Не найдено phone_lap2.mp4 в TestVideos/")
+            return
+        }
+        let p1 = CGPoint(x: 867, y: 410.8)
+        let p2 = CGPoint(x: 956, y: 396.5)
+        let started = Date()
+        let output = try await VideoAnalyzer.analyze(videoURL: url, p1: p1, p2: p2)
+        print(String(format: "[phone_lap2] анализ=%.1fс пересечений=%d заездов=%d",
+                     Date().timeIntervalSince(started), output.crossings.count, output.laps.count))
+        for c in output.crossings {
+            print(String(format: "[phone_lap2] пересечение t=%.3f %@ перед=%.3f зад=%.3f Δ=%.3f ближнее=%@",
+                         c.time, c.isExit ? "выезд" : "возврат", c.tFront, c.tRear, c.delta,
+                         c.nearIsFront ? "перед" : "зад"))
+        }
+        for lap in output.laps {
+            print(String(format: "[phone_lap2] заезд %d старт(перед)=%.3f финиш(зад)=%@",
+                         lap.index, lap.start, lap.finish.map { String(format: "%.3f", $0) } ?? "—"))
+        }
+        let lap = try XCTUnwrap(output.laps.first(where: { $0.finish != nil }), "нет завершённого заезда")
+        let finish = try XCTUnwrap(lap.finish)
+        XCTAssertEqual(finish, 66.9, accuracy: 0.5)
+    }
+}
+
 /// Конусы бывают любого цвета, а асфальт — не всегда серый (под фонарями
 /// он тёплый). Синтетические кадры: конусы разных цветов с белой полоской
 /// (разрезает конус на два куска) и широкое пятно-«приманка» (одежда).

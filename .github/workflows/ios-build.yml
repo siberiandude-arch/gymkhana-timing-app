@@ -46,6 +46,7 @@ jobs:
             -only-testing:GymkhanaTimingTests/VideoAnalyzerTests \
             -only-testing:GymkhanaTimingTests/ConeDetectorTests \
             -only-testing:GymkhanaTimingTests/PhoneLapClipTests \
+            -only-testing:GymkhanaTimingTests/PhoneLap2Tests \
             CODE_SIGNING_ALLOWED=NO \
             2>&1 | tee test.log
 
