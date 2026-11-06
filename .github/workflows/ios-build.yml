@@ -44,6 +44,7 @@ jobs:
             -scheme GymkhanaTiming \
             -destination 'platform=iOS Simulator,name=iPhone 16,OS=latest' \
             -only-testing:GymkhanaTimingTests/VideoAnalyzerTests \
+            -only-testing:GymkhanaTimingTests/ConeDetectorTests \
             CODE_SIGNING_ALLOWED=NO \
             2>&1 | tee test.log
 
