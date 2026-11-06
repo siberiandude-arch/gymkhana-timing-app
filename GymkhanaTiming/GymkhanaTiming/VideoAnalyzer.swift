@@ -544,6 +544,13 @@ enum VideoAnalyzer {
                 }
             }
             if fgCount < rawSkipCount { continue }
+            // Движением считается больше 30% области — это не байк, а сдвиг
+            // камеры (её берут в руки в конце заезда, штатив качнуло) или
+            // скачок освещения. Кадр пропускаем, фон тем временем
+            // подстраивается; иначе такой скачок засчитывался бы как
+            // пересечение линии (так таймер останавливался уже после
+            // реального финиша).
+            if fgCount * 10 > scratch.count * 3 { continue }
 
             // Кроп вокруг движения с запасом, достаточным, чтобы результат
             // морфологии совпал с обработкой всего кадра целиком.
@@ -907,7 +914,8 @@ enum VideoAnalyzer {
     /// пределах minLapDuration друг от друга перед самым первым разрывом) —
     /// на старте байк иногда покачивается туда-сюда через линию перед тем,
     /// как окончательно уехать.
-    private static func pairLaps(crossings: [Crossing], minLapDuration: Double = 2.0) -> (laps: [LapAttempt], startDirection: Bool) {
+    private static func pairLaps(crossings: [Crossing], minLapDuration: Double = 2.0,
+                                 minLapForFinish: Double = 8.0) -> (laps: [LapAttempt], startDirection: Bool) {
         guard !crossings.isEmpty else { return ([], true) }
         var burstEnd = 0
         while burstEnd + 1 < crossings.count, crossings[burstEnd + 1].time - crossings[burstEnd].time < minLapDuration {
@@ -925,14 +933,22 @@ enum VideoAnalyzer {
 
         var laps: [LapAttempt] = []
         var pendingStart: Crossing?
+        var lastFinish: Crossing?
         for crossing in crossings {
             if crossing.fromPositiveSide == startDirection {
+                // Сразу после финиша байк ещё стоит/покачивается у створа:
+                // выезд в течение пары секунд — это не новый старт, а то же
+                // покачивание (иначе из него вырастает "заезд 2" на 3 секунды).
+                if let done = lastFinish, crossing.time - done.time < minLapDuration * 1.5 { continue }
                 if let unfinished = pendingStart, crossing.time - unfinished.time >= minLapDuration {
                     laps.append(incomplete(unfinished, index: laps.count + 1))
                 }
                 pendingStart = crossing
-            } else if let started = pendingStart, crossing.time - started.time >= minLapDuration {
+            } else if let started = pendingStart, crossing.time - started.time >= minLapForFinish {
+                // Заезд короче 8 секунд — не заезд (ни одно упражнение так не
+                // проезжается), а дребезг у створа; финиш ждём дальше.
                 laps.append(complete(started, crossing, index: laps.count + 1))
+                lastFinish = crossing
                 pendingStart = nil
             }
             // иначе: пересечение случилось раньше minLapDuration после

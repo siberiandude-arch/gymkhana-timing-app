@@ -136,6 +136,7 @@ final class PhoneLapClipTests: XCTestCase {
         // что допуск ±0.6 с.
         let laser = try XCTUnwrap(lap.duration)
         XCTAssertEqual(laser, 69.3, accuracy: 0.6)
+        XCTAssertEqual(output.laps.filter { $0.finish != nil }.count, 1)
     }
 }
 
@@ -170,6 +171,9 @@ final class PhoneLap2Tests: XCTestCase {
         let lap = try XCTUnwrap(output.laps.first(where: { $0.finish != nil }), "нет завершённого заезда")
         let finish = try XCTUnwrap(lap.finish)
         XCTAssertEqual(finish, 66.9, accuracy: 0.5)
+        // Ровно один заезд: ни «заезда 2» из покачивания у створа после финиша,
+        // ни скачка камеры в конце клипа.
+        XCTAssertEqual(output.laps.filter { $0.finish != nil }.count, 1)
     }
 }
 
