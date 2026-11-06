@@ -96,6 +96,51 @@ final class VideoAnalyzerTests: XCTestCase {
     }
 }
 
+/// Конус на реальной записи оказался красно-оранжевым (оттенок ≈ 0–5°), и
+/// детектор, настроенный на чисто оранжевый, не находил ничего. Здесь
+/// синтетический кадр: два красных конуса с белой полоской (разрезает
+/// конус на два куска) и широкое красное пятно-«приманка» (одежда).
+final class ConeDetectorTests: XCTestCase {
+
+    func testFindsRedStripedConesAndIgnoresWideBlob() throws {
+        let size = CGSize(width: 1920, height: 1080)
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        format.opaque = true
+        let image = UIGraphicsImageRenderer(size: size, format: format).image { ctx in
+            UIColor(white: 0.4, alpha: 1).setFill()
+            ctx.fill(CGRect(origin: .zero, size: size))
+
+            let red = UIColor(red: 205 / 255, green: 55 / 255, blue: 45 / 255, alpha: 1)
+            func cone(apexX: CGFloat, apexY: CGFloat, baseY: CGFloat, halfWidth: CGFloat) {
+                red.setFill()
+                let path = UIBezierPath()
+                path.move(to: CGPoint(x: apexX, y: apexY))
+                path.addLine(to: CGPoint(x: apexX - halfWidth, y: baseY))
+                path.addLine(to: CGPoint(x: apexX + halfWidth, y: baseY))
+                path.close()
+                path.fill()
+                UIColor.white.setFill()
+                ctx.fill(CGRect(x: apexX - halfWidth, y: (apexY + baseY) / 2, width: halfWidth * 2, height: 6))
+            }
+            cone(apexX: 500, apexY: 300, baseY: 380, halfWidth: 30)
+            cone(apexX: 800, apexY: 290, baseY: 370, halfWidth: 30)
+            red.setFill()
+            ctx.fill(CGRect(x: 600, y: 330, width: 100, height: 30))
+        }
+        let cg = try XCTUnwrap(image.cgImage)
+
+        let polygon = [CGPoint(x: 430, y: 250), CGPoint(x: 870, y: 250),
+                       CGPoint(x: 870, y: 420), CGPoint(x: 430, y: 420)]
+        let (left, right) = try ConeDetector.findConeBases(in: cg, polygon: polygon)
+
+        XCTAssertEqual(left.x, 500, accuracy: 8)
+        XCTAssertEqual(left.y, 380, accuracy: 8)
+        XCTAssertEqual(right.x, 800, accuracy: 8)
+        XCTAssertEqual(right.y, 370, accuracy: 8)
+    }
+}
+
 private extension CGPoint {
     func scaled(_ scale: CGFloat) -> CGPoint {
         CGPoint(x: x * scale, y: y * scale)

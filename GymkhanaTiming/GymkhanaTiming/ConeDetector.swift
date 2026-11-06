@@ -25,10 +25,15 @@ enum ConeDetector {
         let region = CGRect(x: xs.min() ?? 0, y: ys.min() ?? 0,
                             width: (xs.max() ?? 0) - (xs.min() ?? 0),
                             height: (ys.max() ?? 0) - (ys.min() ?? 0))
-        let x0 = max(0, Int(region.minX.rounded(.down)))
-        let y0 = max(0, Int(region.minY.rounded(.down)))
-        let x1 = min(image.width, Int(region.maxX.rounded(.up)))
-        let y1 = min(image.height, Int(region.maxY.rounded(.up)))
+        // Пальцем контур ведут неточно — он нередко режет конус по краю или
+        // проходит чуть выше основания. Даём запас: обводка толстеет на
+        // ~10% меньшей стороны (и область поиска растёт на столько же),
+        // иначе у "обрезанного" конуса пропадает основание.
+        let margin = max(4.0, 0.1 * Double(min(region.width, region.height)))
+        let x0 = max(0, Int((region.minX - margin).rounded(.down)))
+        let y0 = max(0, Int((region.minY - margin).rounded(.down)))
+        let x1 = min(image.width, Int((region.maxX + margin).rounded(.up)))
+        let y1 = min(image.height, Int((region.maxY + margin).rounded(.up)))
         let w = x1 - x0, h = y1 - y0
         guard w > 8, h > 8 else { throw DetectionError.regionTooSmall }
 
@@ -48,13 +53,16 @@ enum ConeDetector {
             maskCtx.translateBy(x: 0, y: CGFloat(h))
             maskCtx.scaleBy(x: 1, y: -1)
             maskCtx.setFillColor(gray: 1, alpha: 1)
+            maskCtx.setStrokeColor(gray: 1, alpha: 1)
+            maskCtx.setLineWidth(CGFloat(margin * 2))
+            maskCtx.setLineJoin(.round)
             maskCtx.beginPath()
             for (i, pt) in polygon.enumerated() {
                 let q = CGPoint(x: pt.x - CGFloat(x0), y: pt.y - CGFloat(y0))
                 if i == 0 { maskCtx.move(to: q) } else { maskCtx.addLine(to: q) }
             }
             maskCtx.closePath()
-            maskCtx.fillPath()
+            maskCtx.drawPath(using: .fillStroke)
             return true
         }
         guard insideOK else { throw DetectionError.bitmapCreationFailed }
@@ -134,16 +142,17 @@ enum ConeDetector {
         let base: CGPoint
     }
 
-    /// Оранжевый пластик конуса: оттенок 10–44°, насыщенный и не тёмный.
-    /// Проверено на реальных кадрах — в отличие от прежнего порога по RGB
-    /// ловит и конус в полутени, а красную одежду (оттенок <10°) отсекает.
-    /// (r — максимальный канал, поэтому оттенок выражается через (g−b)/(r−b).)
+    /// Пластик конуса: от красного (−15°) до оранжевого (45°), насыщенный и
+    /// не тёмный. Сначала я делал только оранжевый (10–45°), но на реальной
+    /// записи конусы оказались красно-оранжевыми (оттенок ≈ 0–5°) и не
+    /// находились вовсе. Красная одежда тоже попадает в маску, но отсекается
+    /// формой (конус выше, чем шире) и выбором пары похожего размера.
+    /// (r — максимальный канал, оттенок выражается через g−b и r−min(g,b).)
     private static func isConeOrange(r: Int, g: Int, b: Int) -> Bool {
-        guard r >= 80, r >= g, g >= b else { return false }
-        let delta = r - b
-        guard delta * 255 >= r * 120 else { return false }  // насыщенность ≥ 0.47
-        let gb = g - b
-        return gb * 6 >= delta && gb * 4 <= delta * 3        // ≈ 0.167…0.75 → 10°…45°
+        guard r >= 80, r >= g, r >= b else { return false }
+        let delta = r - min(g, b)
+        guard delta * 255 >= r * 120 else { return false }   // насыщенность ≥ 0.47
+        return (g - b) * 4 <= 3 * delta && (b - g) * 4 <= delta
     }
 
     private static func dilate(mask: [Bool], width: Int, height: Int, radius: Int) -> [Bool] {
