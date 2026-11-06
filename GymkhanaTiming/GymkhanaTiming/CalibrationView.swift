@@ -100,7 +100,7 @@ struct CalibrationView: View {
                     }
                     .contentShape(Rectangle())
                     .gesture(
-                        DragGesture(minimumDistance: 0)
+                        DragGesture(minimumDistance: 10)
                             .onChanged { value in handleDrag(value, containerSize: geo.size, ended: false) }
                             .onEnded { value in handleDrag(value, containerSize: geo.size, ended: true) }
                     )
@@ -193,7 +193,10 @@ struct CalibrationView: View {
     private func handleDrag(_ value: DragGesture.Value, containerSize: CGSize, ended: Bool) {
         let wasDrawing = isDrawing
         isDrawing = !ended
-        guard !isPinching, !isDetecting else { return }
+        // Когда линия уже построена, жесты на кадре ничего не сбрасывают —
+        // случайный тап (особенно при масштабировании) не должен стирать
+        // результат. Чтобы обвести заново, есть кнопка «Обвести заново».
+        guard points.count < 2, !isPinching, !isDetecting else { return }
         if !wasDrawing {
             lasso = [value.startLocation]
             points.removeAll()

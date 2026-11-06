@@ -45,6 +45,7 @@ jobs:
             -destination 'platform=iOS Simulator,name=iPhone 16,OS=latest' \
             -only-testing:GymkhanaTimingTests/VideoAnalyzerTests \
             -only-testing:GymkhanaTimingTests/ConeDetectorTests \
+            -only-testing:GymkhanaTimingTests/PhoneLapClipTests \
             CODE_SIGNING_ALLOWED=NO \
             2>&1 | tee test.log
 

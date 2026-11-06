@@ -96,6 +96,46 @@ final class VideoAnalyzerTests: XCTestCase {
     }
 }
 
+/// Клип заезда, выгруженный приложением с телефона (1920x1080, линия и
+/// таймер вшиты в кадр, на борту — водяной знак конвертера). Разбор по
+/// кадрам вручную (время в секундах от начала клипа):
+///   старт: переднее колесо касается линии ≈0.95, заднее ≈1.45;
+///   финиш: переднее колесо ≈69.7, заднее ≈70.25.
+/// Оба колеса видны камере по очереди, но трекер видит только ближнее:
+/// на старте это заднее, на финише переднее — без поправки получается
+/// около секунды недобора против правила «как лазер».
+final class PhoneLapClipTests: XCTestCase {
+    func testLaserTimingOnPhoneClip() async throws {
+        guard let url = Bundle(for: PhoneLapClipTests.self)
+            .url(forResource: "phone_lap", withExtension: "mp4", subdirectory: "TestVideos") else {
+            XCTFail("Не найдено phone_lap.mp4 в TestVideos/")
+            return
+        }
+        let p1 = CGPoint(x: 1012.5, y: 777)
+        let p2 = CGPoint(x: 1205, y: 752.5)
+        let started = Date()
+        let output = try await VideoAnalyzer.analyze(videoURL: url, p1: p1, p2: p2)
+        print(String(format: "[phone_lap] анализ=%.1fс пересечений=%d заездов=%d",
+                     Date().timeIntervalSince(started), output.crossings.count, output.laps.count))
+        for c in output.crossings {
+            print(String(format: "[phone_lap] пересечение t=%.3f %@ перед=%.3f зад=%.3f Δ=%.3f ближнее=%@ поправка=%@",
+                         c.time, c.isExit ? "выезд" : "возврат", c.tFront, c.tRear, c.delta,
+                         c.nearIsFront ? "перед" : "зад", c.compensated ? "да" : "нет"))
+        }
+        for lap in output.laps {
+            print(String(format: "[phone_lap] заезд %d старт(перед)=%.3f финиш(зад)=%@ круг(лазер)=%@ наблюдаемый=%@",
+                         lap.index, lap.start,
+                         lap.finish.map { String(format: "%.3f", $0) } ?? "—",
+                         lap.duration.map { String(format: "%.3f", $0) } ?? "—",
+                         lap.observedDuration.map { String(format: "%.3f", $0) } ?? "—"))
+        }
+        let lap = try XCTUnwrap(output.laps.first(where: { $0.finish != nil }), "нет завершённого заезда")
+        // Ручная разметка ≈69.3 с по лазеру (70.25 − 0.95); допуск пока широкий.
+        let laser = try XCTUnwrap(lap.duration)
+        XCTAssertEqual(laser, 69.3, accuracy: 3.0)
+    }
+}
+
 /// Конусы бывают любого цвета, а асфальт — не всегда серый (под фонарями
 /// он тёплый). Синтетические кадры: конусы разных цветов с белой полоской
 /// (разрезает конус на два куска) и широкое пятно-«приманка» (одежда).

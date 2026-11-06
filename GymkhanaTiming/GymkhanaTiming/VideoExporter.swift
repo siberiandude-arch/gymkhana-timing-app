@@ -32,26 +32,40 @@ enum VideoExporter {
         guard rangeEnd > rangeStart else { throw ExportError.emptyRange }
 
         let naturalSize = try await videoTrack.load(.naturalSize)
-        let lineWidth = max(2, naturalSize.width / 250)
+
+        // Клип сжимается до 1280 по ширине: оригинал 1920x1080 с высоким
+        // битрейтом камеры выходил на ~100 МБ за заезд, а для просмотра и
+        // пересылки такого качества не нужно. Меньшие видео не трогаем.
+        let scale = naturalSize.width > 1280 ? 1280 / naturalSize.width : 1
+        let outputSize = CGSize(width: (naturalSize.width * scale / 2).rounded() * 2,
+                                height: (naturalSize.height * scale / 2).rounded() * 2)
+        let lineWidth = max(2, outputSize.width / 250)
+        let scaledP1 = CGPoint(x: p1.x * scale, y: p1.y * scale)
+        let scaledP2 = CGPoint(x: p2.x * scale, y: p2.y * scale)
 
         // Линия одинакова на всех кадрах — рисуем её один раз. На каждом
         // кадре перерисовывается только маленькая плашка с таймером: раньше
         // каждый кадр получал заново отрисованный слой во весь размер
         // (1920x1080), и экспорт шёл примерно в реальном времени.
-        let lineLayer = Self.lineOverlay(size: naturalSize, p1: p1, p2: p2, lineWidth: lineWidth)
+        let lineLayer = Self.lineOverlay(size: outputSize, p1: scaledP1, p2: scaledP2, lineWidth: lineWidth)
         let lapStart = lap.start
 
         let videoComposition = AVMutableVideoComposition(asset: asset) { request in
-            let size = request.renderSize
             let elapsed = max(0, min(request.compositionTime.seconds, finish) - lapStart)
-            var result = lineLayer.composited(over: request.sourceImage)
-            if let timer = Self.timerOverlay(text: String(format: "%.2f", elapsed), frameSize: size) {
+            var base = request.sourceImage
+            if scale != 1 {
+                base = base.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
+            }
+            var result = lineLayer.composited(over: base)
+            if let timer = Self.timerOverlay(text: String(format: "%.2f", elapsed), frameSize: outputSize) {
                 result = timer.composited(over: result)
             }
             request.finish(with: result, context: nil)
         }
+        videoComposition.renderSize = outputSize
 
-        guard let exportSession = AVAssetExportSession(asset: asset, presetName: AVAssetExportPresetHighestQuality) else {
+        let presetName = scale < 1 ? AVAssetExportPreset1280x720 : AVAssetExportPresetHighestQuality
+        guard let exportSession = AVAssetExportSession(asset: asset, presetName: presetName) else {
             throw ExportError.sessionCreationFailed
         }
         exportSession.videoComposition = videoComposition

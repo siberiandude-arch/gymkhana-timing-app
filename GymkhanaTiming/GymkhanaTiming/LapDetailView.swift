@@ -80,7 +80,7 @@ struct LapDetailView: View {
             VideoPlayer(player: player)
                 .aspectRatio(16.0 / 9.0, contentMode: .fit)
                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                .overlay(alignment: .topTrailing) {
+                .overlay(alignment: .topLeading) {  // справа сверху — таймер, вшитый в кадр
                     Button {
                         isFullscreen = true
                     } label: {
@@ -174,7 +174,7 @@ private struct FullscreenPlayer: View {
     let onClose: () -> Void
 
     var body: some View {
-        ZStack(alignment: .topTrailing) {
+        ZStack(alignment: .topLeading) {
             Color.black.ignoresSafeArea()
             VideoPlayer(player: player)
                 .ignoresSafeArea()
