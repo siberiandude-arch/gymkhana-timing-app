@@ -852,17 +852,14 @@ enum VideoAnalyzer {
             }
 
             // Какая точка силуэта считается "ближней" — по направлению
-            // движения. У стоящего или покачивающегося байка знак скорости
-            // дрожит, и точка перескакивала бы между левым и правым краем
-            // (разница — длина байка), рождая фантомные пересечения линии;
-            // поэтому выбор меняется, только когда скорость заметна.
-            let scale = Double(frameWidth) / 1920.0
-            let vxThreshold = 2.0 * scale
-            var useRight = vx[0] > 0
+            // движения (передний по ходу край нижней полосы силуэта).
+            // Пробовал гистерезис по знаку скорости против дрожания у
+            // стоящего байка — на медленных заездах он залипал на не той
+            // точке и пересечения пропадали совсем; дрожание отсеивается
+            // позже, по размаху движения (excursion, см. pairLaps).
             var dist = [Double](repeating: 0, count: segRecords.count)
             for i in 0..<segRecords.count {
-                if vx[i] > vxThreshold { useRight = true } else if vx[i] < -vxThreshold { useRight = false }
-                let point = useRight ? segRecords[i].rightBottom : segRecords[i].leftBottom
+                let point = vx[i] > 0 ? segRecords[i].rightBottom : segRecords[i].leftBottom
                 dist[i] = signedDistance(point)
             }
 
@@ -956,7 +953,7 @@ enum VideoAnalyzer {
     /// как окончательно уехать.
     private static func pairLaps(crossings: [Crossing], minLapDuration: Double = 2.0,
                                  minLapForFinish: Double = 8.0,
-                                 minExcursion: Double = 0.8) -> (laps: [LapAttempt], startDirection: Bool) {
+                                 minExcursion: Double = 0.5) -> (laps: [LapAttempt], startDirection: Bool) {
         guard !crossings.isEmpty else { return ([], true) }
         var burstEnd = 0
         while burstEnd + 1 < crossings.count, crossings[burstEnd + 1].time - crossings[burstEnd].time < minLapDuration {
