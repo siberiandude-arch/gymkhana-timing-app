@@ -2,9 +2,11 @@ import CoreGraphics
 import Foundation
 
 /// Находит основания двух конусов (там, где они касаются асфальта) в
-/// области кадра, обведённой пользователем от руки (замкнутый контур) — по цвету: конусы ярко-
-/// оранжевые, асфальт/трава/небо — нет. Это помощник поверх ручной
-/// разметки, а не замена: если не нашёл — райдер просто ставит точки сам.
+/// области кадра, обведённой пользователем от руки (замкнутый контур).
+/// Цвет конуса не важен: ищется всё, что по оттенку заметно отличается
+/// от асфальта, затем отбираются фигуры формы конуса (выше, чем шире) и
+/// выбирается пара похожего размера. Если не нашёл — райдеру предлагается
+/// обвести точнее или выбрать другой кадр.
 ///
 /// Основание берём специально (не верхушку) — трекер в VideoAnalyzer
 /// отслеживает нижнюю точку силуэта байка (колесо на асфальте), и линия
@@ -80,19 +82,64 @@ enum ConeDetector {
         ctx.scaleBy(x: 1, y: -1)
         ctx.draw(cropped, in: CGRect(x: 0, y: 0, width: w, height: h))
 
-        var mask = [Bool](repeating: false, count: w * h)
+        // Конусы бывают любого цвета, поэтому ищем не конкретный цвет, а то,
+        // что заметно отличается от асфальта: берём типичный (медианный)
+        // оттенок внутри обводки — там почти везде асфальт — и помечаем
+        // пиксели, чей оттенок от него далеко. Оттенок — это пара
+        // (R−G, (R+G)/2−B): она почти не зависит от яркости, так что тени
+        // и белая разметка (тот же оттенок, что у асфальта) не мешают.
+        let count = w * h
+        var chromaU = [Int16](repeating: 0, count: count)
+        var chromaV = [Int16](repeating: 0, count: count)
+        var brightness = [UInt8](repeating: 0, count: count)
+        var histU = [Int](repeating: 0, count: 511)
+        var histV = [Int](repeating: 0, count: 511)
+        var insideCount = 0
         pixels.withUnsafeBufferPointer { buf in
-            for i in 0..<(w * h) {
+            for i in 0..<count {
                 let r = Int(buf[i * 4]), g = Int(buf[i * 4 + 1]), b = Int(buf[i * 4 + 2])
-                mask[i] = inside[i] > 127 && isConeOrange(r: r, g: g, b: b)
+                let u = r - g
+                let v = (r + g) / 2 - b
+                chromaU[i] = Int16(u)
+                chromaV[i] = Int16(v)
+                brightness[i] = UInt8(max(r, g, b))
+                if inside[i] > 127 {
+                    histU[u + 255] += 1
+                    histV[v + 255] += 1
+                    insideCount += 1
+                }
             }
+        }
+        guard insideCount > 0 else { throw DetectionError.regionTooSmall }
+        let medianU = Double(histogramMedian(histU, total: insideCount) - 255)
+        let medianV = Double(histogramMedian(histV, total: insideCount) - 255)
+
+        // Типичное отклонение оттенка в самом асфальте (на тонированном
+        // фонарями асфальте оно больше) — порог не должен быть меньше.
+        var histDist = [Int](repeating: 0, count: 512)
+        var distance = [Float](repeating: 0, count: count)
+        for i in 0..<count {
+            let du = Double(chromaU[i]) - medianU, dv = Double(chromaV[i]) - medianV
+            let d = Float((du * du + dv * dv).squareRoot())
+            distance[i] = d
+            if inside[i] > 127 { histDist[min(511, Int(d))] += 1 }
+        }
+        let typicalDeviation = Double(histogramMedian(histDist, total: insideCount))
+        let threshold = Float(max(45.0, 4.0 * typicalDeviation))
+
+        var mask = [Bool](repeating: false, count: count)
+        for i in 0..<count {
+            mask[i] = inside[i] > 127 && brightness[i] >= 50 && distance[i] >= threshold
         }
 
         // Конус часто разрезан светоотражающей полоской или бликом на
-        // несколько кусков — склеиваем близкие куски расширением маски,
-        // но сами пиксели конуса (и его основание) берём из исходной.
+        // несколько кусков, поэтому склеиваем куски расширением маски:
+        // слабо по горизонтали и заметно по вертикали (полоски лежат друг
+        // над другом). Сами пиксели конуса и его основание берём из
+        // исходной маски.
         let radius = max(2, image.width / 400)
-        let dilated = dilate(mask: mask, width: w, height: h, radius: radius)
+        let verticalRadius = max(radius, Int(Double(image.height) * 0.03))
+        let dilated = dilate(mask: mask, width: w, height: h, radiusX: radius, radiusY: verticalRadius)
 
         let minArea = max(12, Int((60.0 * pow(Double(image.width) / 1920.0, 2)).rounded()))
         let rawComponents = findComponents(mask: dilated, width: w, height: h, minArea: 1)
@@ -142,28 +189,34 @@ enum ConeDetector {
         let base: CGPoint
     }
 
-    /// Пластик конуса: от красного (−15°) до оранжевого (45°), насыщенный и
-    /// не тёмный. Сначала я делал только оранжевый (10–45°), но на реальной
-    /// записи конусы оказались красно-оранжевыми (оттенок ≈ 0–5°) и не
-    /// находились вовсе. Красная одежда тоже попадает в маску, но отсекается
-    /// формой (конус выше, чем шире) и выбором пары похожего размера.
-    /// (r — максимальный канал, оттенок выражается через g−b и r−min(g,b).)
-    private static func isConeOrange(r: Int, g: Int, b: Int) -> Bool {
-        guard r >= 80, r >= g, r >= b else { return false }
-        let delta = r - min(g, b)
-        guard delta * 255 >= r * 120 else { return false }   // насыщенность ≥ 0.47
-        return (g - b) * 4 <= 3 * delta && (b - g) * 4 <= delta
+    private static func histogramMedian(_ hist: [Int], total: Int) -> Int {
+        var acc = 0
+        for (value, n) in hist.enumerated() {
+            acc += n
+            if acc * 2 >= total { return value }
+        }
+        return hist.count / 2
     }
 
-    private static func dilate(mask: [Bool], width: Int, height: Int, radius: Int) -> [Bool] {
-        var out = [Bool](repeating: false, count: width * height)
+    /// Расширение маски прямоугольным окном (2rx+1)×(2ry+1) за два прохода
+    /// со скользящей суммой — быстро и при большом окне.
+    private static func dilate(mask: [Bool], width: Int, height: Int, radiusX: Int, radiusY: Int) -> [Bool] {
+        var horizontal = [Bool](repeating: false, count: width * height)
         for y in 0..<height {
-            for x in 0..<width where mask[y * width + x] {
-                let ya = max(0, y - radius), yb = min(height - 1, y + radius)
-                let xa = max(0, x - radius), xb = min(width - 1, x + radius)
-                for yy in ya...yb {
-                    for xx in xa...xb { out[yy * width + xx] = true }
-                }
+            var prefix = [Int](repeating: 0, count: width + 1)
+            for x in 0..<width { prefix[x + 1] = prefix[x] + (mask[y * width + x] ? 1 : 0) }
+            for x in 0..<width {
+                let lo = max(0, x - radiusX), hi = min(width - 1, x + radiusX)
+                horizontal[y * width + x] = prefix[hi + 1] - prefix[lo] > 0
+            }
+        }
+        var out = [Bool](repeating: false, count: width * height)
+        for x in 0..<width {
+            var prefix = [Int](repeating: 0, count: height + 1)
+            for y in 0..<height { prefix[y + 1] = prefix[y] + (horizontal[y * width + x] ? 1 : 0) }
+            for y in 0..<height {
+                let lo = max(0, y - radiusY), hi = min(height - 1, y + radiusY)
+                out[y * width + x] = prefix[hi + 1] - prefix[lo] > 0
             }
         }
         return out

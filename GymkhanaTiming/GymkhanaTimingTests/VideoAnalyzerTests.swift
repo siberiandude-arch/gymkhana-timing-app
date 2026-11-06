@@ -96,24 +96,22 @@ final class VideoAnalyzerTests: XCTestCase {
     }
 }
 
-/// Конус на реальной записи оказался красно-оранжевым (оттенок ≈ 0–5°), и
-/// детектор, настроенный на чисто оранжевый, не находил ничего. Здесь
-/// синтетический кадр: два красных конуса с белой полоской (разрезает
-/// конус на два куска) и широкое красное пятно-«приманка» (одежда).
+/// Конусы бывают любого цвета, а асфальт — не всегда серый (под фонарями
+/// он тёплый). Синтетические кадры: конусы разных цветов с белой полоской
+/// (разрезает конус на два куска) и широкое пятно-«приманка» (одежда).
 final class ConeDetectorTests: XCTestCase {
 
-    func testFindsRedStripedConesAndIgnoresWideBlob() throws {
+    private func makeFrame(asphalt: UIColor, cone: UIColor) throws -> CGImage {
         let size = CGSize(width: 1920, height: 1080)
         let format = UIGraphicsImageRendererFormat()
         format.scale = 1
         format.opaque = true
         let image = UIGraphicsImageRenderer(size: size, format: format).image { ctx in
-            UIColor(white: 0.4, alpha: 1).setFill()
+            asphalt.setFill()
             ctx.fill(CGRect(origin: .zero, size: size))
 
-            let red = UIColor(red: 205 / 255, green: 55 / 255, blue: 45 / 255, alpha: 1)
-            func cone(apexX: CGFloat, apexY: CGFloat, baseY: CGFloat, halfWidth: CGFloat) {
-                red.setFill()
+            func drawCone(apexX: CGFloat, apexY: CGFloat, baseY: CGFloat, halfWidth: CGFloat) {
+                cone.setFill()
                 let path = UIBezierPath()
                 path.move(to: CGPoint(x: apexX, y: apexY))
                 path.addLine(to: CGPoint(x: apexX - halfWidth, y: baseY))
@@ -123,21 +121,47 @@ final class ConeDetectorTests: XCTestCase {
                 UIColor.white.setFill()
                 ctx.fill(CGRect(x: apexX - halfWidth, y: (apexY + baseY) / 2, width: halfWidth * 2, height: 6))
             }
-            cone(apexX: 500, apexY: 300, baseY: 380, halfWidth: 30)
-            cone(apexX: 800, apexY: 290, baseY: 370, halfWidth: 30)
-            red.setFill()
+            drawCone(apexX: 500, apexY: 300, baseY: 380, halfWidth: 30)
+            drawCone(apexX: 800, apexY: 290, baseY: 370, halfWidth: 30)
+            cone.setFill()
             ctx.fill(CGRect(x: 600, y: 330, width: 100, height: 30))
         }
-        let cg = try XCTUnwrap(image.cgImage)
+        return try XCTUnwrap(image.cgImage)
+    }
 
+    private func assertFindsBothCones(asphalt: UIColor, cone: UIColor, file: StaticString = #filePath, line: UInt = #line) throws {
+        let cg = try makeFrame(asphalt: asphalt, cone: cone)
         let polygon = [CGPoint(x: 430, y: 250), CGPoint(x: 870, y: 250),
                        CGPoint(x: 870, y: 420), CGPoint(x: 430, y: 420)]
         let (left, right) = try ConeDetector.findConeBases(in: cg, polygon: polygon)
+        XCTAssertEqual(left.x, 500, accuracy: 8, file: file, line: line)
+        XCTAssertEqual(left.y, 380, accuracy: 8, file: file, line: line)
+        XCTAssertEqual(right.x, 800, accuracy: 8, file: file, line: line)
+        XCTAssertEqual(right.y, 370, accuracy: 8, file: file, line: line)
+    }
 
-        XCTAssertEqual(left.x, 500, accuracy: 8)
-        XCTAssertEqual(left.y, 380, accuracy: 8)
-        XCTAssertEqual(right.x, 800, accuracy: 8)
-        XCTAssertEqual(right.y, 370, accuracy: 8)
+    private func rgb(_ r: CGFloat, _ g: CGFloat, _ b: CGFloat) -> UIColor {
+        UIColor(red: r / 255, green: g / 255, blue: b / 255, alpha: 1)
+    }
+
+    func testRedConesOnGrayAsphalt() throws {
+        try assertFindsBothCones(asphalt: UIColor(white: 0.4, alpha: 1), cone: rgb(205, 55, 45))
+    }
+
+    func testOrangeConesOnGrayAsphalt() throws {
+        try assertFindsBothCones(asphalt: UIColor(white: 0.45, alpha: 1), cone: rgb(255, 120, 20))
+    }
+
+    func testBlueConesOnGrayAsphalt() throws {
+        try assertFindsBothCones(asphalt: UIColor(white: 0.35, alpha: 1), cone: rgb(30, 100, 210))
+    }
+
+    func testYellowConesOnWarmAsphalt() throws {
+        try assertFindsBothCones(asphalt: rgb(120, 100, 80), cone: rgb(245, 205, 40))
+    }
+
+    func testGreenConesOnDarkAsphalt() throws {
+        try assertFindsBothCones(asphalt: UIColor(white: 0.2, alpha: 1), cone: rgb(40, 190, 60))
     }
 }
 
