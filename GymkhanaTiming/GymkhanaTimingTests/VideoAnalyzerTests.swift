@@ -208,6 +208,14 @@ final class OriginalVideoTests: XCTestCase {
             print(String(format: "[orig] заезд %d старт(перед)=%.3f финиш(зад)=%@",
                          lap.index, lap.start, lap.finish.map { String(format: "%.3f", $0) } ?? "—"))
         }
+        // Фрагмент трека у финиша — чтобы сверить с отчётом, снятым на телефоне.
+        print("[orig] " + (output.diagnostics.split(separator: "\n").first(where: { $0.hasPrefix("roi=") }).map(String.init) ?? ""))
+        for line in output.diagnostics.split(separator: "\n") {
+            let parts = line.split(separator: ",")
+            if parts.count == 11, let t = Double(parts[1]), t >= 65.8, t <= 67.4 {
+                print("[orig-track] \(line)")
+            }
+        }
         let completed = output.laps.filter { $0.finish != nil }
         XCTAssertEqual(completed.count, 1)
         let finish = try XCTUnwrap(completed.first?.finish)

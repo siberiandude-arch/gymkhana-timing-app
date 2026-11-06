@@ -7,6 +7,9 @@ struct ResultView: View {
     let p2: CGPoint
     let onRestart: () -> Void
 
+    @State private var diagnosticsURL: URL?
+    @State private var isSharingDiagnostics = false
+
     /// Только завершённые заезды, пронумерованные подряд. Попытки без
     /// финиша (райдер выехал и не вернулся через створ, или проехал линию
     /// уже после финиша) — это не заезды, показывать их в списке только
@@ -36,10 +39,41 @@ struct ResultView: View {
             }
             .navigationTitle("Заезды (\(laps.count))")
             .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Menu {
+                        Button {
+                            shareDiagnostics()
+                        } label: {
+                            Label("Отправить диагностику", systemImage: "doc.text")
+                        }
+                    } label: {
+                        Image(systemName: "ellipsis.circle")
+                    }
+                }
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button("Новая сессия", action: onRestart)
                 }
             }
+            .sheet(isPresented: $isSharingDiagnostics) {
+                if let diagnosticsURL { ShareSheet(items: [diagnosticsURL]) }
+            }
+        }
+    }
+}
+
+extension ResultView {
+    /// Сохраняет текстовый отчёт анализа во временный файл и открывает
+    /// системное окно «Поделиться» — чтобы переслать его разработчику.
+    fileprivate func shareDiagnostics() {
+        let device = "\(UIDevice.current.model) iOS \(UIDevice.current.systemVersion)"
+        let text = "device=\(device)\n" + output.diagnostics
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("gymkhana-diagnostics.txt")
+        do {
+            try text.write(to: url, atomically: true, encoding: .utf8)
+            diagnosticsURL = url
+            isSharingDiagnostics = true
+        } catch {
+            diagnosticsURL = nil
         }
     }
 }

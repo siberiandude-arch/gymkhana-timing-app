@@ -156,6 +156,10 @@ struct CrossingDebugInfo: Identifiable {
 struct AnalysisOutput {
     let laps: [LapAttempt]
     let crossings: [CrossingDebugInfo]
+    /// Текстовый отчёт для разбора на стороне: параметры видео, пересечения,
+    /// заезды и весь трек силуэта (CSV) — по нему можно воспроизвести
+    /// расчёт без исходного видео.
+    var diagnostics: String = ""
 }
 
 enum AnalyzerError: Error {
@@ -313,9 +317,11 @@ enum VideoAnalyzer {
         async let tracked = trackMotorcycle(url: videoURL, roi: roi, scale: scale, decimation: decimation)
         let staticEndFrame = try await staticEnd
         var records = try await tracked
+        let rawRecordCount = records.count
         if let limit = staticEndFrame {
             records = records.filter { $0.frame < limit }
         }
+        let nominalFPS = try await videoTrack.load(.nominalFrameRate)
         print("[VideoAnalyzer] \(videoURL.lastPathComponent): staticEndFrame=\(staticEndFrame?.description ?? "nil"), \(records.count) detections, \(String(format: "%.1f", Date().timeIntervalSince(started)))с")
 
         let crossings = analyzeCrossings(records: records, p1: p1, p2: p2,
@@ -331,7 +337,26 @@ enum VideoAnalyzer {
                               excursionBefore: $0.excursionBefore, excursionAfter: $0.excursionAfter,
                               silHeight: $0.silHeight)
         }
-        return AnalysisOutput(laps: laps, crossings: debugCrossings)
+        var report = "GymkhanaTiming diagnostics\n"
+        report += "video=\(videoURL.lastPathComponent) \(width)x\(height) nominalFPS=\(nominalFPS) scale=\(String(format: "%.4f", scale)) decimation=\(decimation)\n"
+        report += "roi=\(roi.x0),\(roi.y0)-\(roi.x1),\(roi.y1) staticEndFrame=\(staticEndFrame?.description ?? "nil") records=\(records.count)/\(rawRecordCount)\n"
+        report += String(format: "p1=(%.1f,%.1f) p2=(%.1f,%.1f)\n", p1.x, p1.y, p2.x, p2.y)
+        report += "-- crossings (t, dir, tFront, tRear, nearIsFront, before, after, silHeight)\n"
+        for c in debugCrossings {
+            report += String(format: "%.3f %@ %.3f %.3f %@ %.0f %.0f %.0f\n", c.time, c.isExit ? "exit" : "return",
+                             c.tFront, c.tRear, c.nearIsFront ? "front" : "rear",
+                             c.excursionBefore, c.excursionAfter, c.silHeight)
+        }
+        report += "-- laps (index, start, finish)\n"
+        for lap in laps {
+            report += String(format: "%d %.3f %@\n", lap.index, lap.start, lap.finish.map { String(format: "%.3f", $0) } ?? "-")
+        }
+        report += "-- records csv: frame,t,cx,cy,area,Lx,Ly,Rx,Ry,top,bottom\n"
+        for r in records {
+            report += String(format: "%d,%.4f,%.1f,%.1f,%.0f,%.0f,%.0f,%.0f,%.0f,%.0f,%.0f\n", r.frame, r.t, r.cx, r.cy, Double(r.area),
+                             r.leftBottom.x, r.leftBottom.y, r.rightBottom.x, r.rightBottom.y, r.top, r.bottom)
+        }
+        return AnalysisOutput(laps: laps, crossings: debugCrossings, diagnostics: report)
     }
 
     /// Ближайшее нечётное число (округление вниз, если между двумя нечётными) —
