@@ -126,6 +126,15 @@ private struct Crossing {
     /// false — камера видит оба колеса сама (или ракурс не позволяет оценить
     /// разницу), и tFront == tRear == time.
     let compensated: Bool
+    /// Насколько далеко (пиксели) ближняя точка уходила от линии до этого
+    /// пересечения и после него — в пределах непрерывного присутствия байка
+    /// в кадре и до соседних пересечений. Настоящий выезд/возврат — это
+    /// проезд через упражнение (десятки метров), а не покачивание у створа.
+    var excursionBefore: Double = 0
+    var excursionAfter: Double = 0
+    /// Высота силуэта байка с райдером (пиксели) — единица измерения для
+    /// excursion: проезд на порядок больше неё, покачивание — меньше.
+    var silHeight: Double = 0
 }
 
 /// То же пересечение, но с направлением, переведённым в понятный человеку
@@ -139,6 +148,9 @@ struct CrossingDebugInfo: Identifiable {
     let delta: Double
     let nearIsFront: Bool
     let compensated: Bool
+    let excursionBefore: Double
+    let excursionAfter: Double
+    let silHeight: Double
 }
 
 struct AnalysisOutput {
@@ -315,7 +327,9 @@ enum VideoAnalyzer {
         let debugCrossings = crossings.map {
             CrossingDebugInfo(time: $0.time, isExit: $0.fromPositiveSide == startDirection,
                               tFront: $0.tFront, tRear: $0.tRear, delta: $0.delta,
-                              nearIsFront: $0.nearIsFront, compensated: $0.compensated)
+                              nearIsFront: $0.nearIsFront, compensated: $0.compensated,
+                              excursionBefore: $0.excursionBefore, excursionAfter: $0.excursionAfter,
+                              silHeight: $0.silHeight)
         }
         return AnalysisOutput(laps: laps, crossings: debugCrossings)
     }
@@ -837,20 +851,46 @@ enum VideoAnalyzer {
                 }
             }
 
+            // Какая точка силуэта считается "ближней" — по направлению
+            // движения. У стоящего или покачивающегося байка знак скорости
+            // дрожит, и точка перескакивала бы между левым и правым краем
+            // (разница — длина байка), рождая фантомные пересечения линии;
+            // поэтому выбор меняется, только когда скорость заметна.
+            let scale = Double(frameWidth) / 1920.0
+            let vxThreshold = 2.0 * scale
+            var useRight = vx[0] > 0
             var dist = [Double](repeating: 0, count: segRecords.count)
             for i in 0..<segRecords.count {
-                let point = vx[i] > 0 ? segRecords[i].rightBottom : segRecords[i].leftBottom
+                if vx[i] > vxThreshold { useRight = true } else if vx[i] < -vxThreshold { useRight = false }
+                let point = useRight ? segRecords[i].rightBottom : segRecords[i].leftBottom
                 dist[i] = signedDistance(point)
             }
 
+            var found: [(index: Int, tNear: Double, fromPositive: Bool)] = []
             for i in 1..<dist.count {
                 let d0 = dist[i - 1], d1 = dist[i]
                 if (d0 > 0) != (d1 > 0) {
                     let t0 = segRecords[i - 1].t, t1 = segRecords[i].t
                     let frac = -d0 / (d1 - d0)
-                    let tNear = t0 + frac * (t1 - t0)
-                    crossings.append(makeCrossing(tNear: tNear, fromPositive: d0 > 0, normalY: normalY))
+                    found.append((i, t0 + frac * (t1 - t0), d0 > 0))
                 }
+            }
+            for (k, c) in found.enumerated() {
+                let prevIndex = k > 0 ? found[k - 1].index : 0
+                let nextIndex = k + 1 < found.count ? found[k + 1].index : dist.count
+                var before = 0.0
+                for j in prevIndex..<c.index { before = max(before, abs(dist[j])) }
+                var after = 0.0
+                for j in c.index..<nextIndex { after = max(after, abs(dist[j])) }
+                var silHeight = 0.0
+                for r in segRecords where abs(r.t - c.tNear) <= 0.5 {
+                    silHeight = max(silHeight, r.bottom - r.top)
+                }
+                var crossing = makeCrossing(tNear: c.tNear, fromPositive: c.fromPositive, normalY: normalY)
+                crossing.excursionBefore = before
+                crossing.excursionAfter = after
+                crossing.silHeight = silHeight
+                crossings.append(crossing)
             }
         }
         return crossings.sorted { $0.time < $1.time }
@@ -915,7 +955,8 @@ enum VideoAnalyzer {
     /// на старте байк иногда покачивается туда-сюда через линию перед тем,
     /// как окончательно уехать.
     private static func pairLaps(crossings: [Crossing], minLapDuration: Double = 2.0,
-                                 minLapForFinish: Double = 8.0) -> (laps: [LapAttempt], startDirection: Bool) {
+                                 minLapForFinish: Double = 8.0,
+                                 minExcursion: Double = 0.8) -> (laps: [LapAttempt], startDirection: Bool) {
         guard !crossings.isEmpty else { return ([], true) }
         var burstEnd = 0
         while burstEnd + 1 < crossings.count, crossings[burstEnd + 1].time - crossings[burstEnd].time < minLapDuration {
@@ -933,22 +974,23 @@ enum VideoAnalyzer {
 
         var laps: [LapAttempt] = []
         var pendingStart: Crossing?
-        var lastFinish: Crossing?
         for crossing in crossings {
             if crossing.fromPositiveSide == startDirection {
-                // Сразу после финиша байк ещё стоит/покачивается у створа:
-                // выезд в течение пары секунд — это не новый старт, а то же
-                // покачивание (иначе из него вырастает "заезд 2" на 3 секунды).
-                if let done = lastFinish, crossing.time - done.time < minLapDuration * 1.5 { continue }
+                // Настоящий выезд — это когда байк уезжает от створа далеко
+                // (на порядок больше своего размера). Покачивание у створа
+                // после финиша или на старте так не выглядит. Это работает и
+                // когда сразу после финиша стартует другой райдер: он уезжает.
+                if crossing.silHeight > 0, crossing.excursionAfter < minExcursion * crossing.silHeight { continue }
                 if let unfinished = pendingStart, crossing.time - unfinished.time >= minLapDuration {
                     laps.append(incomplete(unfinished, index: laps.count + 1))
                 }
                 pendingStart = crossing
+            } else if crossing.silHeight > 0, crossing.excursionBefore < minExcursion * crossing.silHeight {
+                continue  // возврат без предшествующего заезда — покачивание
             } else if let started = pendingStart, crossing.time - started.time >= minLapForFinish {
                 // Заезд короче 8 секунд — не заезд (ни одно упражнение так не
                 // проезжается), а дребезг у створа; финиш ждём дальше.
                 laps.append(complete(started, crossing, index: laps.count + 1))
-                lastFinish = crossing
                 pendingStart = nil
             }
             // иначе: пересечение случилось раньше minLapDuration после

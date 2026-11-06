@@ -160,9 +160,9 @@ final class PhoneLap2Tests: XCTestCase {
         print(String(format: "[phone_lap2] анализ=%.1fс пересечений=%d заездов=%d",
                      Date().timeIntervalSince(started), output.crossings.count, output.laps.count))
         for c in output.crossings {
-            print(String(format: "[phone_lap2] пересечение t=%.3f %@ перед=%.3f зад=%.3f Δ=%.3f ближнее=%@",
+            print(String(format: "[phone_lap2] пересечение t=%.3f %@ перед=%.3f зад=%.3f Δ=%.3f ближнее=%@ до=%.0f после=%.0f силуэт=%.0f",
                          c.time, c.isExit ? "выезд" : "возврат", c.tFront, c.tRear, c.delta,
-                         c.nearIsFront ? "перед" : "зад"))
+                         c.nearIsFront ? "перед" : "зад", c.excursionBefore, c.excursionAfter, c.silHeight))
         }
         for lap in output.laps {
             print(String(format: "[phone_lap2] заезд %d старт(перед)=%.3f финиш(зад)=%@",
@@ -174,6 +174,39 @@ final class PhoneLap2Tests: XCTestCase {
         // Ровно один заезд: ни «заезда 2» из покачивания у створа после финиша,
         // ни скачка камеры в конце клипа.
         XCTAssertEqual(output.laps.filter { $0.finish != nil }.count, 1)
+    }
+}
+
+/// Исходное видео (1920x1080) того самого заезда, который приложение
+/// посчитало неверно (таймер продолжался после финиша). Линия — там же,
+/// где она была при выгрузке клипа: от левого конуса к правому.
+/// Ручная разметка (секунды от начала видео): финиш по заднему ≈66.9.
+final class OriginalVideoTests: XCTestCase {
+    func testOriginalRecordingFinishesAtRearWheelCrossing() async throws {
+        guard let url = Bundle(for: OriginalVideoTests.self)
+            .url(forResource: "orig_0909", withExtension: "mp4", subdirectory: "TestVideos") else {
+            XCTFail("Не найдено orig_0909.mp4 в TestVideos/")
+            return
+        }
+        let p1 = CGPoint(x: 1300.5, y: 616.2)
+        let p2 = CGPoint(x: 1434, y: 594.75)
+        let started = Date()
+        let output = try await VideoAnalyzer.analyze(videoURL: url, p1: p1, p2: p2)
+        print(String(format: "[orig] анализ=%.1fс пересечений=%d заездов=%d",
+                     Date().timeIntervalSince(started), output.crossings.count, output.laps.count))
+        for c in output.crossings {
+            print(String(format: "[orig] пересечение t=%.3f %@ перед=%.3f зад=%.3f ближнее=%@ до=%.0f после=%.0f силуэт=%.0f",
+                         c.time, c.isExit ? "выезд" : "возврат", c.tFront, c.tRear,
+                         c.nearIsFront ? "перед" : "зад", c.excursionBefore, c.excursionAfter, c.silHeight))
+        }
+        for lap in output.laps {
+            print(String(format: "[orig] заезд %d старт(перед)=%.3f финиш(зад)=%@",
+                         lap.index, lap.start, lap.finish.map { String(format: "%.3f", $0) } ?? "—"))
+        }
+        let completed = output.laps.filter { $0.finish != nil }
+        XCTAssertEqual(completed.count, 1)
+        let finish = try XCTUnwrap(completed.first?.finish)
+        XCTAssertEqual(finish, 66.9, accuracy: 0.6)
     }
 }
 
